@@ -22,11 +22,17 @@ jobs:
       - name: Tests
         shell: pwsh
         run: |
+          npm ci --no-audit --no-fund
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          npm run build
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          npm run lint
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
           node --check segretario.js
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           node --check background.js
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          node --test tests/vaadin-regression.test.cjs tests/ollama-models.test.cjs tests/diagnostics.test.cjs tests/updates.test.cjs
+          node --test tests/vaadin-regression.test.cjs tests/ollama-models.test.cjs tests/diagnostics.test.cjs tests/updates.test.cjs tests/standalone.test.cjs
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
       # Test PowerShell isolati: non installano o avviano Ollama.
       - name: Installer regression checks

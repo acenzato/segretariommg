@@ -3,7 +3,11 @@
 
   // ============================================================
   // SEGRETARIO MMG
-  // Versione 0.16.28
+  // Versione 0.16.29
+  //
+  // FILE GENERATO da tools/build_extension.mjs: non modificarlo a mano.
+  // Sorgenti: src/engine (algoritmi, eseguibili anche in Node) e
+  // src/extension (interfaccia Eumed, Vaadin, Chrome, Ollama).
   //
   // - Estrazione con Qwen 3.5 4B locale
   // - Comunicazione diretta Ollama via service worker Chrome
@@ -18,6 +22,8 @@
   // - Verifica numerica/data dopo ogni scrittura Vaadin
   // - Salvataggio finale SEMPRE manuale
   // ============================================================
+
+  // Configurazione, normalizzazione nomi esame, concetti clinici e utilità comuni.
 
   // Esami più prescritti nello studio: usati come candidati forti
   // nel fallback Qwen. La lista viene comunque intersecata con la Grid
@@ -106,34 +112,6 @@
     return true;
   }
 
-  function getFrequentExamPriorityHints(availableExams) {
-    const result = [];
-    const seen = new Set();
-
-    for (const rule of FREQUENT_EXAM_HINT_RULES) {
-      const matches = availableExams.filter(exam =>
-        frequentRuleMatchesExam(rule, exam)
-      );
-
-      for (const exam of matches) {
-        const key = normalizeExamName(exam);
-        if (seen.has(key)) continue;
-        seen.add(key);
-
-        const catalogMatch = matchCatalog(exam);
-        const code = catalogMatch?.entry?.code || "";
-
-        result.push({
-          exam,
-          code,
-          key: rule.key
-        });
-      }
-    }
-
-    return result;
-  }
-
   const CONFIG = {
     aiModel: "qwen3.5:4b",
 
@@ -197,37 +175,6 @@
     if (CONFIG.debug) console.log("[Segretario MMG]", ...args);
   };
 
-  function extensionContextIsValid() {
-    try {
-      if (
-        typeof chrome === "undefined" ||
-        !chrome.runtime ||
-        !chrome.runtime.id
-      ) {
-        return false;
-      }
-
-      const testUrl =
-        chrome.runtime.getURL("manifest.json");
-
-      return !!testUrl;
-    } catch {
-      return false;
-    }
-  }
-
-  function makeExtensionContextError(stage = "") {
-    const suffix = stage ? ` (${stage})` : "";
-    const error = new Error(
-      "Il contesto dell'estensione Chrome è stato invalidato" +
-      suffix +
-      ". Ricarica la pagina Eumed (Ctrl+Shift+R) e riseleziona il file. " +
-      "Non è necessario riavviare Ollama."
-    );
-    error.code = "EXTENSION_CONTEXT_INVALIDATED";
-    return error;
-  }
-
   function isExtensionContextInvalidatedError(error) {
     const message =
       String(error?.message || error || "");
@@ -239,62 +186,7 @@
     );
   }
 
-  function assertExtensionContext(stage = "") {
-    if (!extensionContextIsValid()) {
-      throw makeExtensionContextError(stage);
-    }
-  }
-
-  function extensionUrl(path, stage = "") {
-    assertExtensionContext(stage);
-
-    try {
-      return chrome.runtime.getURL(path);
-    } catch (error) {
-      if (isExtensionContextInvalidatedError(error)) {
-        throw makeExtensionContextError(stage);
-      }
-      throw error;
-    }
-  }
-
-  // Evita doppie istanze dopo reload manuale dell'estensione.
-  try {
-    document.getElementById("segretario-mmg-host")?.remove();
-  } catch {}
-
   const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
-
-  // v0.14.3: attese adattive. Invece di pagare sempre una pausa fissa
-  // prima di controllare il DOM Vaadin, verifica subito e poi riprova a
-  // intervalli brevi fino allo stesso timeout massimo usato in precedenza.
-  // Sui PC/pagine veloci si prosegue quasi subito; sulle pagine lente la
-  // tolleranza resta invariata.
-  async function pollUntil(check, timeoutMs, intervalMs = 30) {
-    const startedAt = Date.now();
-
-    while (true) {
-      try {
-        const value = check();
-        if (value) return value;
-      } catch {}
-
-      if (Date.now() - startedAt >= timeoutMs) {
-        return null;
-      }
-
-      await sleep(intervalMs);
-    }
-  }
-
-  function escapeHtml(value) {
-    return String(value ?? "")
-      .replaceAll("&", "&amp;")
-      .replaceAll("<", "&lt;")
-      .replaceAll(">", "&gt;")
-      .replaceAll('"', "&quot;")
-      .replaceAll("'", "&#039;");
-  }
 
   function normalizeExamName(text) {
     return String(text ?? "")
@@ -380,12 +272,6 @@
     if (!iso) return "";
     const [y, m, d] = iso.split("-");
     return `${d}/${m}/${y}`;
-  }
-
-  function sameDateValue(a, b) {
-    const x = normalizeDateValue(a);
-    const y = normalizeDateValue(b);
-    return Boolean(x && y && x === y);
   }
 
   function formatNumber(number, decimals, trimZeros = false) {
@@ -786,761 +672,6 @@
     }[kind] || kind;
   }
 
-  function vaadinClick(el) {
-    if (!el) throw new Error("Elemento da cliccare assente.");
-
-    const r = el.getBoundingClientRect();
-    const x = r.left + r.width / 2;
-    const y = r.top + r.height / 2;
-
-    const base = {
-      bubbles: true,
-      cancelable: true,
-      view: window,
-      clientX: x,
-      clientY: y,
-      button: 0
-    };
-
-    el.dispatchEvent(new MouseEvent("mouseover", { ...base, buttons: 0 }));
-    el.dispatchEvent(new MouseEvent("mousemove", { ...base, buttons: 0 }));
-    el.dispatchEvent(new MouseEvent("mousedown", { ...base, buttons: 1 }));
-    el.dispatchEvent(new MouseEvent("mouseup", { ...base, buttons: 0 }));
-    el.dispatchEvent(new MouseEvent("click", { ...base, buttons: 0 }));
-  }
-
-  function getGridRows() {
-    return [
-      ...document.querySelectorAll(
-        ".v-grid-body tr.v-grid-row.v-grid-row-has-data"
-      )
-    ];
-  }
-
-  // Vaadin 8 usa una Grid virtualizzata: il DOM contiene soltanto le righe
-  // visibili e un piccolo buffer. Manteniamo quindi un indice locale di
-  // tutte le prestazioni incontrate durante una scansione verticale.
-  const eumedGridIndex = new Map();
-
-  // v0.13.3:
-  // Vaadin virtualizza la Grid e la stessa prestazione può essere presente
-  // più volte con differenti "Data prescriz.". eumedGridIndex resta l'indice
-  // dei nomi unici; qui conserviamo invece TUTTE le varianti datate viste
-  // durante la scansione.
-  const eumedGridSnapshots = new Map();
-
-  // Data referto da usare per scegliere, tra righe duplicate, la prescrizione
-  // valida più recente con Data prescriz. <= Data referto.
-  const preferredReportDateByExam = new Map();
-
-  let eumedGridScrollContainer = null;
-
-  function findEumedGridScrollContainer() {
-    if (eumedGridScrollContainer && eumedGridScrollContainer.isConnected) return eumedGridScrollContainer;
-    const body = document.querySelector(".v-grid-body");
-    if (!body) return null;
-    const grid = body.closest(".v-grid") || body.parentElement?.closest(".v-grid");
-    const direct = grid?.querySelector(".v-grid-scroller-vertical") || document.querySelector(".v-grid-scroller-vertical");
-    if (direct) {
-      eumedGridScrollContainer = direct;
-      return direct;
-    }
-    let current = body;
-    while (current) {
-      if (Number(current.scrollHeight||0) > Number(current.clientHeight||0) + 4) {
-        eumedGridScrollContainer = current;
-        return current;
-      }
-      current = current.parentElement;
-    }
-    return null;
-  }
-
-  function scoreEumedSnapshot(cells) {
-    const columns = [
-      CONFIG.resultDateColumn,
-      CONFIG.valueColumn,
-      CONFIG.resultColumn,
-      CONFIG.minColumn,
-      CONFIG.maxColumn
-    ].filter(Number.isInteger);
-
-    let empty = 0;
-
-    for (const index of columns) {
-      if (!String(cells[index] || "").trim()) {
-        empty += 1;
-      }
-    }
-
-    return empty;
-  }
-
-  function snapshotPrescriptionDate(snapshot) {
-    return normalizeDateValue(
-      snapshot?.cells?.[
-        CONFIG.prescriptionDateColumn
-      ] || ""
-    );
-  }
-
-  function rowPrescriptionDate(row) {
-    if (!row) return "";
-
-    const cells = [
-      ...row.querySelectorAll("td.v-grid-cell")
-    ];
-
-    return normalizeDateValue(
-      cells[
-        CONFIG.prescriptionDateColumn
-      ]?.textContent?.trim() || ""
-    );
-  }
-
-  function dateToDayNumber(value) {
-    const iso = normalizeDateValue(value);
-    if (!iso) return null;
-
-    const [y, m, d] = iso
-      .split("-")
-      .map(Number);
-
-    return Math.floor(
-      Date.UTC(y, m - 1, d) / 86400000
-    );
-  }
-
-  function setPreferredReportDateForExam(
-    examName,
-    reportDate
-  ) {
-    const iso =
-      normalizeDateValue(reportDate);
-
-    if (!examName || !iso) return;
-
-    const previous =
-      preferredReportDateByExam.get(examName);
-
-    if (previous !== iso) {
-      preferredReportDateByExam.set(
-        examName,
-        iso
-      );
-
-      // La cache riga deve essere rivalutata quando cambia il referto.
-      examRowSelectionCache.delete(examName);
-    }
-  }
-
-  function rememberEumedSnapshot(snapshot) {
-    const name = snapshot?.name;
-    if (!name) return;
-
-    if (!eumedGridSnapshots.has(name)) {
-      eumedGridSnapshots.set(name, []);
-    }
-
-    const list = eumedGridSnapshots.get(name);
-
-    const prescriptionRaw =
-      String(
-        snapshot.cells[
-          CONFIG.prescriptionDateColumn
-        ] || ""
-      ).trim();
-
-    const prescriptionIso =
-      normalizeDateValue(
-        prescriptionRaw
-      );
-
-    // La data di prescrizione è il discriminante principale. Se due righe
-    // hanno la stessa data, per la scrittura sono equivalenti: conserva
-    // quella più vuota / meglio utilizzabile.
-    const existingIndex =
-      list.findIndex(item =>
-        (
-          snapshotPrescriptionDate(item) &&
-          snapshotPrescriptionDate(item) === prescriptionIso
-        ) ||
-        (
-          !prescriptionIso &&
-          String(
-            item.cells[
-              CONFIG.prescriptionDateColumn
-            ] || ""
-          ).trim() === prescriptionRaw
-        )
-      );
-
-    if (existingIndex < 0) {
-      list.push(snapshot);
-      return;
-    }
-
-    if (
-      snapshot.score >
-      Number(list[existingIndex]?.score || 0)
-    ) {
-      list[existingIndex] = snapshot;
-    }
-  }
-
-  function chooseSnapshotForReportDate(
-    examName,
-    reportDate = ""
-  ) {
-    const list =
-      eumedGridSnapshots.get(examName) ||
-      [];
-
-    if (!list.length) {
-      return eumedGridIndex.get(examName) || null;
-    }
-
-    const reportIso =
-      normalizeDateValue(
-        reportDate ||
-        preferredReportDateByExam.get(examName) ||
-        ""
-      );
-
-    // Se non abbiamo ancora una data referto (fase di lettura/analisi),
-    // manteniamo il comportamento storico: riga più vuota.
-    if (!reportIso) {
-      return [...list]
-        .sort((a, b) =>
-          Number(b.score || 0) -
-          Number(a.score || 0)
-        )[0] || null;
-    }
-
-    const reportDay =
-      dateToDayNumber(reportIso);
-
-    const dated = list
-      .map(snapshot => ({
-        snapshot,
-        prescriptionIso:
-          snapshotPrescriptionDate(snapshot),
-        day:
-          dateToDayNumber(
-            snapshotPrescriptionDate(snapshot)
-          )
-      }))
-      .filter(item =>
-        item.prescriptionIso &&
-        Number.isFinite(item.day)
-      );
-
-    const validPrior = dated
-      .filter(item =>
-        item.day <= reportDay
-      )
-      .sort((a, b) =>
-        // Più vicina al referto = data prescrizione più recente.
-        b.day - a.day ||
-        Number(b.snapshot.score || 0) -
-        Number(a.snapshot.score || 0)
-      );
-
-    if (validPrior.length) {
-      return validPrior[0].snapshot;
-    }
-
-    // Se c'è una sola riga, non cambiamo il comportamento storico.
-    // Il vincolo forte viene applicato alle duplicazioni reali.
-    if (list.length === 1) {
-      return list[0];
-    }
-
-    // Più righe ma nessuna prescrizione precedente/uguale al referto:
-    // NON scegliere automaticamente una prescrizione futura.
-    return null;
-  }
-
-  function getDuplicateExamCount(examName) {
-    return (
-      eumedGridSnapshots.get(examName)?.length ||
-      0
-    );
-  }
-
-  function captureVisibleEumedRows() {
-    const container =
-      findEumedGridScrollContainer();
-
-    const scrollTop =
-      Number(container?.scrollTop || 0);
-
-    for (const row of getGridRows()) {
-      const cells = [
-        ...row.querySelectorAll("td.v-grid-cell")
-      ].map(cell => cell.textContent.trim());
-
-      const name =
-        cells[CONFIG.examNameColumn]?.trim();
-
-      if (!name) continue;
-
-      const snapshot = {
-        name,
-        cells,
-        scrollTop,
-        score: scoreEumedSnapshot(cells)
-      };
-
-      rememberEumedSnapshot(snapshot);
-
-      const previous =
-        eumedGridIndex.get(name);
-
-      // L'indice principale continua a rappresentare una riga generica
-      // utilizzabile per discovery/target. Le duplicazioni reali vengono
-      // gestite da eumedGridSnapshots al momento della scrittura.
-      if (
-        !previous ||
-        snapshot.score > previous.score
-      ) {
-        eumedGridIndex.set(name, snapshot);
-      }
-    }
-  }
-
-  async function scanAllEumedRows(
-    onProgress = null,
-    { clear = true } = {}
-  ) {
-    if (clear) {
-      eumedGridIndex.clear();
-      eumedGridSnapshots.clear();
-      examRowSelectionCache.clear();
-    }
-
-    captureVisibleEumedRows();
-
-    const container =
-      findEumedGridScrollContainer();
-
-    if (!container) {
-      return {
-        count: eumedGridIndex.size,
-        virtualized: false
-      };
-    }
-
-    const originalTop =
-      Number(container.scrollTop || 0);
-
-    const maxScroll = Math.max(
-      0,
-      container.scrollHeight -
-        container.clientHeight
-    );
-
-    const step = Math.max(
-      140,
-      Math.floor(
-        Number(container.clientHeight || 300) * 0.72
-      )
-    );
-
-    const positions = [0];
-
-    for (
-      let pos = step;
-      pos < maxScroll;
-      pos += step
-    ) {
-      positions.push(pos);
-    }
-
-    if (
-      maxScroll > 0 &&
-      positions[positions.length - 1] !== maxScroll
-    ) {
-      positions.push(maxScroll);
-    }
-
-    for (let i = 0; i < positions.length; i++) {
-      container.scrollTop = positions[i];
-      container.dispatchEvent(
-        new Event("scroll", { bubbles: true })
-      );
-
-      await sleep(260);
-      captureVisibleEumedRows();
-
-      onProgress?.({
-        current: i + 1,
-        total: positions.length,
-        count: eumedGridIndex.size
-      });
-    }
-
-    container.scrollTop =
-      Math.min(
-        originalTop,
-        Math.max(
-          0,
-          container.scrollHeight -
-            container.clientHeight
-        )
-      );
-
-    container.dispatchEvent(
-      new Event("scroll", { bubbles: true })
-    );
-
-    await sleep(180);
-    captureVisibleEumedRows();
-
-    return {
-      count: eumedGridIndex.size,
-      virtualized: positions.length > 1
-    };
-  }
-
-  async function ensureExamRowVisible(
-    examName,
-    attempts = 2,
-    reportDate = ""
-  ) {
-    const reportIso =
-      normalizeDateValue(
-        reportDate ||
-        preferredReportDateByExam.get(examName) ||
-        ""
-      );
-
-    let row =
-      getPreferredExamRow(
-        examName,
-        reportIso
-      );
-
-    if (row) return row;
-
-    const container =
-      findEumedGridScrollContainer();
-
-    if (!container) return null;
-
-    const snapshot =
-      chooseSnapshotForReportDate(
-        examName,
-        reportIso
-      );
-
-    // Se è un duplicato e non esiste alcuna prescrizione valida precedente
-    // al referto, non cercare/forzare una riga futura.
-    if (
-      reportIso &&
-      getDuplicateExamCount(examName) > 1 &&
-      !snapshot
-    ) {
-      return null;
-    }
-
-    if (snapshot) {
-      container.scrollTop =
-        Number(snapshot.scrollTop || 0);
-
-      container.dispatchEvent(
-        new Event("scroll", { bubbles: true })
-      );
-
-      row = await pollUntil(() => {
-        captureVisibleEumedRows();
-        return getPreferredExamRow(
-          examName,
-          reportIso
-        );
-      }, 220, 25);
-
-      if (row) return row;
-    }
-
-    // Fallback mirato: riscorri la Grid finché compare la riga corretta
-    // (nome + Data prescriz. quando il referto la rende discriminante).
-    for (
-      let attempt = 0;
-      attempt < attempts;
-      attempt++
-    ) {
-      const maxScroll = Math.max(
-        0,
-        container.scrollHeight -
-          container.clientHeight
-      );
-
-      const step = Math.max(
-        140,
-        Math.floor(
-          Number(container.clientHeight || 300) *
-          0.72
-        )
-      );
-
-      for (
-        let pos = 0;
-        pos <= maxScroll;
-        pos += step
-      ) {
-        container.scrollTop =
-          Math.min(pos, maxScroll);
-
-        container.dispatchEvent(
-          new Event("scroll", { bubbles: true })
-        );
-
-        row = await pollUntil(() => {
-          captureVisibleEumedRows();
-          return getPreferredExamRow(
-            examName,
-            reportIso
-          );
-        }, 150, 25);
-
-        if (row) return row;
-      }
-
-      if (maxScroll > 0) {
-        container.scrollTop = maxScroll;
-
-        container.dispatchEvent(
-          new Event("scroll", { bubbles: true })
-        );
-
-        row = await pollUntil(() => {
-          captureVisibleEumedRows();
-          return getPreferredExamRow(
-            examName,
-            reportIso
-          );
-        }, 170, 25);
-
-        if (row) return row;
-      }
-    }
-
-    return null;
-  }
-
-  function getAvailableExams() {
-    captureVisibleEumedRows();
-
-    return [
-      ...eumedGridIndex.keys()
-    ];
-  }
-
-  function getCachedExamCells(examName) {
-    const visible =
-      findExamRows(examName)[0] || null;
-
-    if (visible) {
-      return [
-        ...visible.querySelectorAll("td.v-grid-cell")
-      ].map(cell => cell.textContent.trim());
-    }
-
-    return (
-      eumedGridIndex.get(examName)?.cells ||
-      null
-    );
-  }
-
-  function isEumedExamEmpty(examName) {
-    const cells =
-      getCachedExamCells(examName);
-
-    if (!cells) return false;
-
-    const value =
-      cells[CONFIG.valueColumn]?.trim() || "";
-
-    const result =
-      cells[CONFIG.resultColumn]?.trim() || "";
-
-    if (getLongReportKind(examName)) {
-      return (
-        normalizeExamName(result) !== "VEDI REFERTO"
-      );
-    }
-
-    return !value && !result;
-  }
-
-  function getEmptyEumedExams() {
-    return getAvailableExams()
-      .filter(isEumedExamEmpty);
-  }
-
-  function findExamRows(examName) {
-    return getGridRows().filter(row => {
-      const cells = [...row.querySelectorAll("td.v-grid-cell")];
-
-      return cells.some(cell => cell.textContent.trim() === examName);
-    });
-  }
-
-  // Se la stessa prestazione compare più volte nella Grid:
-  // - scegli una Data prescriz. <= Data referto;
-  // - se sono più di una, usa la più vicina al referto;
-  // - a parità di data, preferisci la riga più vuota.
-  const examRowSelectionCache = new Map();
-
-  function scoreExamRowForSelection(row) {
-    const cells = [...row.querySelectorAll("td.v-grid-cell")];
-
-    const interestingColumns = [
-      CONFIG.resultDateColumn,
-      CONFIG.valueColumn,
-      CONFIG.resultColumn,
-      CONFIG.minColumn,
-      CONFIG.maxColumn
-    ].filter(index => Number.isInteger(index));
-
-    let emptyCount = 0;
-
-    for (const index of interestingColumns) {
-      const value = cells[index]?.textContent?.trim() || "";
-      if (!value) emptyCount += 1;
-    }
-
-    let score = emptyCount * 10;
-
-    try {
-      if (isVisibleElement(row)) score += 3;
-    } catch {}
-
-    return score;
-  }
-
-  function getPreferredExamRow(
-    examName,
-    reportDate = ""
-  ) {
-    captureVisibleEumedRows();
-
-    const rows = findExamRows(examName);
-    if (!rows.length) return null;
-
-    const reportIso =
-      normalizeDateValue(
-        reportDate ||
-        preferredReportDateByExam.get(examName) ||
-        ""
-      );
-
-    const targetSnapshot =
-      chooseSnapshotForReportDate(
-        examName,
-        reportIso
-      );
-
-    const desiredPrescriptionDate =
-      snapshotPrescriptionDate(
-        targetSnapshot
-      );
-
-    const selectionKey =
-      `${reportIso}|${desiredPrescriptionDate}`;
-
-    const cached =
-      examRowSelectionCache.get(examName);
-
-    if (
-      cached?.row &&
-      cached.row.isConnected &&
-      rows.includes(cached.row) &&
-      cached.selectionKey === selectionKey
-    ) {
-      return cached.row;
-    }
-
-    let candidates = [...rows];
-
-    if (
-      desiredPrescriptionDate
-    ) {
-      const exact = candidates.filter(
-        row =>
-          rowPrescriptionDate(row) ===
-          desiredPrescriptionDate
-      );
-
-      if (exact.length) {
-        candidates = exact;
-      } else if (
-        getDuplicateExamCount(examName) > 1
-      ) {
-        // La riga giusta non è nel viewport corrente.
-        return null;
-      }
-    } else if (
-      reportIso &&
-      getDuplicateExamCount(examName) > 1
-    ) {
-      console.warn(
-        `Segretario MMG: "${examName}" presente in più righe, ` +
-        `ma nessuna Data prescriz. è <= Data referto ${formatDateForGrid(reportIso)}. ` +
-        "Inserimento automatico non eseguito su una prescrizione futura."
-      );
-      return null;
-    }
-
-    const selected =
-      candidates
-        .map((row, index) => ({
-          row,
-          index,
-          score:
-            scoreExamRowForSelection(row)
-        }))
-        .sort((a, b) =>
-          b.score - a.score ||
-          a.index - b.index
-        )[0]?.row || null;
-
-    if (!selected) return null;
-
-    if (
-      getDuplicateExamCount(examName) > 1
-    ) {
-      const chosenPrescription =
-        rowPrescriptionDate(selected);
-
-      log(
-        `Prestazione duplicata in Eumed: "${examName}" ` +
-        `(${getDuplicateExamCount(examName)} date). ` +
-        `Referto ${formatDateForGrid(reportIso)} -> ` +
-        `prescrizione ${formatDateForGrid(chosenPrescription)}.`
-      );
-    }
-
-    examRowSelectionCache.set(
-      examName,
-      {
-        row: selected,
-        selectionKey
-      }
-    );
-
-    return selected;
-  }
-
-  function readExamRow(examName) {
-    const row = getPreferredExamRow(examName);
-    if (!row) return null;
-
-    return [...row.querySelectorAll("td.v-grid-cell")]
-      .map(cell => cell.textContent.trim());
-  }
-
   const EXAM_ALIASES = {
     "PCR": "PROTEINA C REATTIVA",
     "GGT": "GAMMA GLUTAMIL",
@@ -1575,29 +706,55 @@
     "PSA": "ANTIGENE PROSTATICO SPECIFICO"
   };
 
+  // Catalogo laboratorio locale, specimen, unità di misura e conversioni.
+
+
+  function getFrequentExamPriorityHints(availableExams) {
+    const result = [];
+    const seen = new Set();
+
+    for (const rule of FREQUENT_EXAM_HINT_RULES) {
+      const matches = availableExams.filter(exam =>
+        frequentRuleMatchesExam(rule, exam)
+      );
+
+      for (const exam of matches) {
+        const key = normalizeExamName(exam);
+        if (seen.has(key)) continue;
+        seen.add(key);
+
+        const catalogMatch = matchCatalog(exam);
+        const code = catalogMatch?.entry?.code || "";
+
+        result.push({
+          exam,
+          code,
+          key: rule.key
+        });
+      }
+    }
+
+    return result;
+  }
+
 
   // ============================================================
   // CATALOGO LABORATORIO LOCALE + SPECIMEN
   // ============================================================
 
-  let labCatalog = [];
+  const labCatalog = [];
   let labCatalogPromise = null;
 
   async function ensureLabCatalog() {
     if (labCatalog.length) return labCatalog;
 
     if (!labCatalogPromise) {
-      labCatalogPromise = fetch(
-        extensionUrl("lab_catalog.json", "catalogo locale")
-      )
-        .then(response => {
-          if (!response.ok) {
-            throw new Error(`Catalogo laboratorio HTTP ${response.status}`);
-          }
-          return response.json();
-        })
+      labCatalogPromise = Promise.resolve()
+        .then(() => loadLabCatalogData())
         .then(data => {
-          labCatalog = Array.isArray(data?.entries) ? data.entries : [];
+          const entries = Array.isArray(data?.entries) ? data.entries : [];
+          labCatalog.length = 0;
+          for (const entry of entries) labCatalog.push(entry);
           return labCatalog;
         })
         .catch(error => {
@@ -2218,1832 +1375,14 @@
     };
   }
 
-  function typeVaadinChar(input, char) {
-    input.dispatchEvent(new KeyboardEvent("keydown", {
-      key: char,
-      bubbles: true,
-      cancelable: true
-    }));
+  // Referti lunghi (emocromo, urine, protidogramma, ...): riconoscimento e testo.
 
-    input.dispatchEvent(new KeyboardEvent("keypress", {
-      key: char,
-      bubbles: true,
-      cancelable: true
-    }));
-
-    input.dispatchEvent(new InputEvent("beforeinput", {
-      inputType: "insertText",
-      data: char,
-      bubbles: true,
-      cancelable: true
-    }));
-
-    document.execCommand("insertText", false, char);
-
-    input.dispatchEvent(new KeyboardEvent("keyup", {
-      key: char,
-      bubbles: true
-    }));
-  }
-
-  function dispatchVaadinKey(input, type, key, code, keyCode) {
-    const event = new KeyboardEvent(type, {
-      key,
-      code,
-      bubbles: true,
-      cancelable: true
-    });
-
-    // GWT/Vaadin 8 può leggere keyCode/which invece di key.
-    for (const prop of ["keyCode", "which"]) {
-      try {
-        Object.defineProperty(event, prop, {
-          configurable: true,
-          get: () => keyCode
-        });
-      } catch {}
-    }
-
-    input.dispatchEvent(event);
-  }
-
-  function vaadinDoubleClick(el) {
-    if (!el) return;
-    vaadinClick(el);
-    vaadinClick(el);
-    const r = el.getBoundingClientRect();
-    el.dispatchEvent(new MouseEvent("dblclick", {
-      bubbles: true, cancelable: true, view: window,
-      clientX: r.left + r.width/2,
-      clientY: r.top + r.height/2,
-      button: 0, detail: 2
-    }));
-  }
-
-  async function openGridEditorForExam(examName, preferredColumn, mode = "numeric") {
-    await ensureExamRowVisible(examName);
-    for (let attempt = 0; attempt < 4; attempt++) {
-      const row = getPreferredExamRow(examName);
-      if (!row) return null;
-      const cells = [...row.querySelectorAll("td.v-grid-cell")];
-      const preferred = cells[preferredColumn] || cells[CONFIG.examNameColumn];
-      const examCell = cells[CONFIG.examNameColumn];
-      const target = attempt < 2 ? preferred : examCell;
-      if (!target) return null;
-      if (attempt % 2 === 0) vaadinClick(target); else vaadinDoubleClick(target);
-      if (mode === "result") {
-        const filter = await waitForWritableResultFilter();
-        if (filter) return { row: getPreferredExamRow(examName) || row, filter };
-      } else {
-        // In condizioni normali l'editor compare quasi subito. Il polling
-        // parte immediatamente e conserva i retry storici se non compare.
-        const fields = await waitForNumericEditor(900);
-        if (fields) return { row: getPreferredExamRow(examName) || row, fields };
-      }
-      await sleep(40);
-    }
-    return null;
-  }
-
-  async function waitForNumericEditor(timeoutMs = CONFIG.editorWaitMs) {
-    return await pollUntil(() => {
-      const fields = [
-        ...document.querySelectorAll(
-          ".v-customcomponent.numeric-field input.v-textfield"
-        )
-      ].filter(el => {
-        const r = el.getBoundingClientRect();
-
-        return (
-          r.width > 0 &&
-          r.height > 0 &&
-          getComputedStyle(el).visibility !== "hidden"
-        );
-      });
-
-      return fields.length === 3 ? fields : null;
-    }, timeoutMs, 30);
-  }
-
-  async function setExamField(examName, fieldIndex, gridColumn, value, fieldLabel) {
-    if (value === null || value === undefined || String(value).trim() === "") {
-      return true;
-    }
-
-    value = String(value).trim();
-
-    const opened = await openGridEditorForExam(examName, gridColumn, "numeric");
-
-    if (!opened?.fields) {
-      console.error(`Segretario MMG: ${fieldLabel} "${examName}": editor numerico Vaadin non aperto.`);
-      return false;
-    }
-
-    const fields = opened.fields;
-    const input = fields[fieldIndex];
-
-    if (!input) {
-      console.error(`Segretario MMG: campo ${fieldLabel} non trovato.`);
-      return false;
-    }
-
-    vaadinClick(input);
-    await sleep(80);
-
-    input.select();
-    await sleep(40);
-
-    for (const char of value) {
-      typeVaadinChar(input, char);
-    }
-
-    await sleep(80);
-
-    if (!sameNumericValue(input.value, value)) {
-      console.error(
-        `Segretario MMG: STOP ${fieldLabel}, input="${input.value}", atteso="${value}".`
-      );
-      return false;
-    }
-
-    input.dispatchEvent(new Event("change", { bubbles: true }));
-
-    input.dispatchEvent(new FocusEvent("focusout", {
-      bubbles: true,
-      relatedTarget: document.body
-    }));
-
-    input.blur();
-
-    await sleep(CONFIG.commitWaitMs);
-
-    const cells = readExamRow(examName);
-    if (!cells) return false;
-
-    const gridValue = cells[gridColumn];
-
-    if (!sameNumericValue(gridValue, value)) {
-      console.error(
-        `Segretario MMG: STOP ${fieldLabel}, Grid="${gridValue}", atteso="${value}".`
-      );
-      return false;
-    }
-
-    log(`${fieldLabel} verificato`, examName, gridValue);
-    return true;
-  }
-
-  function isUsableDateInput(el) {
-    if (!el || el.tagName !== "INPUT") return false;
-
-    const r = el.getBoundingClientRect();
-    if (!(r.width > 0 && r.height > 0)) return false;
-
-    const style = getComputedStyle(el);
-    if (
-      style.visibility === "hidden" ||
-      style.display === "none" ||
-      el.disabled ||
-      el.readOnly
-    ) {
-      return false;
-    }
-
-    // Escludi gli editor che sappiamo non essere la data.
-    if (el.classList.contains("v-filterselect-input")) return false;
-
-    if (
-      el.closest(".numeric-field") ||
-      el.closest(".v-customcomponent.numeric-field")
-    ) {
-      return false;
-    }
-
-    return true;
-  }
-
-  function scoreDateInputForCell(input, dateCell) {
-    const ir = input.getBoundingClientRect();
-    const cr = dateCell.getBoundingClientRect();
-
-    const ix = ir.left + ir.width / 2;
-    const iy = ir.top + ir.height / 2;
-    const cx = cr.left + cr.width / 2;
-    const cy = cr.top + cr.height / 2;
-
-    let score = 0;
-
-    const classText = String(input.className || "");
-    const parentClass = String(input.parentElement?.className || "");
-
-    if (/datefield/i.test(classText)) score += 300;
-    if (/datefield/i.test(parentClass)) score += 220;
-    if (input.closest(".v-datefield")) score += 300;
-
-    // Sovrapposizione verticale con la riga e vicinanza alla colonna Data esito.
-    const verticalOverlap =
-      Math.max(0, Math.min(ir.bottom, cr.bottom) - Math.max(ir.top, cr.top));
-
-    const horizontalOverlap =
-      Math.max(0, Math.min(ir.right, cr.right) - Math.max(ir.left, cr.left));
-
-    if (verticalOverlap > 0) score += 120;
-    if (horizontalOverlap > 0) score += 180;
-
-    const distance =
-      Math.sqrt((ix - cx) ** 2 + (iy - cy) ** 2);
-
-    score -= Math.min(distance, 1000) / 5;
-
-    if (
-      /\d{1,2}[\/.\-]\d{1,2}[\/.\-]\d{2,4}/.test(
-        String(input.value || "")
-      )
-    ) {
-      score += 80;
-    }
-
-    return score;
-  }
-
-  async function waitForDateInput(dateCell, timeoutMs = CONFIG.editorWaitMs) {
-    return await pollUntil(() => {
-      // Se il click sulla cella ha portato direttamente il focus
-      // sull'input della data, questa è la fonte più affidabile.
-      const active = document.activeElement;
-
-      if (isUsableDateInput(active)) {
-        const activeScore =
-          scoreDateInputForCell(active, dateCell);
-
-        if (activeScore > 80) {
-          return active;
-        }
-      }
-
-      // Vaadin 8 DateField standard.
-      const direct = [
-        ...document.querySelectorAll(
-          ".v-datefield input, " +
-          "input.v-datefield-textfield, " +
-          "input[class*='datefield']"
-        )
-      ].filter(isUsableDateInput);
-
-      if (direct.length) {
-        direct.sort(
-          (a, b) =>
-            scoreDateInputForCell(b, dateCell) -
-            scoreDateInputForCell(a, dateCell)
-        );
-
-        return direct[0];
-      }
-
-      // Fallback: input testuale visibile realmente sovrapposto alla cella.
-      const allInputs = [
-        ...document.querySelectorAll("input")
-      ].filter(isUsableDateInput);
-
-      const scored = allInputs
-        .map(el => ({
-          el,
-          score: scoreDateInputForCell(el, dateCell)
-        }))
-        .sort((a, b) => b.score - a.score);
-
-      return scored[0]?.score > 100
-        ? scored[0].el
-        : null;
-    }, timeoutMs, 30);
-  }
-
-  function logDateEditorDiagnostics(dateCell) {
-    try {
-      const cr = dateCell?.getBoundingClientRect();
-
-      const inputs = [
-        ...document.querySelectorAll("input")
-      ]
-        .filter(el => {
-          const r = el.getBoundingClientRect();
-          return r.width > 0 && r.height > 0;
-        })
-        .map(el => ({
-          class: String(el.className || ""),
-          value: el.value || "",
-          readonly: !!el.readOnly,
-          disabled: !!el.disabled,
-          rect: {
-            left: Math.round(el.getBoundingClientRect().left),
-            top: Math.round(el.getBoundingClientRect().top),
-            width: Math.round(el.getBoundingClientRect().width),
-            height: Math.round(el.getBoundingClientRect().height)
-          },
-          html: el.outerHTML.slice(0, 1200)
-        }));
-
-      const dateButtons = [
-        ...document.querySelectorAll(".v-datefield-button")
-      ]
-        .filter(el => {
-          const r = el.getBoundingClientRect();
-          return r.width > 0 && r.height > 0;
-        })
-        .map(el => el.parentElement?.outerHTML?.slice(0, 2500) || el.outerHTML);
-
-      console.error(
-        "Segretario MMG: diagnostica DateField",
-        {
-          dateCell: cr ? {
-            left: Math.round(cr.left),
-            top: Math.round(cr.top),
-            width: Math.round(cr.width),
-            height: Math.round(cr.height)
-          } : null,
-          activeElement: document.activeElement?.outerHTML?.slice(0, 1500) || "",
-          visibleInputs: inputs,
-          visibleDateFields: dateButtons
-        }
-      );
-    } catch {}
-  }
-
-  function selectWholeVaadinInput(input) {
-    if (!input) return;
-
-    try { input.focus(); } catch {}
-
-    try {
-      input.select();
-    } catch {}
-
-    try {
-      input.setSelectionRange(
-        0,
-        String(input.value || "").length
-      );
-    } catch {}
-
-    // Evento legacy utile a GWT; la selezione vera viene comunque
-    // applicata tramite select()/setSelectionRange().
-    try {
-      input.dispatchEvent(
-        new KeyboardEvent("keydown", {
-          key: "a",
-          code: "KeyA",
-          ctrlKey: true,
-          bubbles: true,
-          cancelable: true
-        })
-      );
-      input.dispatchEvent(
-        new KeyboardEvent("keyup", {
-          key: "a",
-          code: "KeyA",
-          ctrlKey: true,
-          bubbles: true,
-          cancelable: true
-        })
-      );
-    } catch {}
-  }
-
-  function setNativeInputValue(input, value) {
-    try {
-      const proto =
-        typeof HTMLTextAreaElement !== "undefined" && input instanceof HTMLTextAreaElement
-          ? HTMLTextAreaElement.prototype
-          : HTMLInputElement.prototype;
-
-      const setter =
-        Object.getOwnPropertyDescriptor(
-          proto,
-          "value"
-        )?.set;
-
-      if (setter) {
-        setter.call(input, value);
-      } else {
-        input.value = value;
-      }
-
-      input.dispatchEvent(
-        new InputEvent("input", {
-          bubbles: true,
-          cancelable: false,
-          inputType: "insertReplacementText",
-          data: value
-        })
-      );
-
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  async function replaceVaadinDateInputFast(
-    input,
-    target,
-    isoDate
-  ) {
-    vaadinClick(input);
-    await sleep(35);
-
-    // FAST PATH: sostituisce l'intera data in un'unica operazione.
-    selectWholeVaadinInput(input);
-    await sleep(20);
-
-    try {
-      document.execCommand(
-        "insertText",
-        false,
-        target
-      );
-    } catch {}
-
-    await sleep(35);
-
-    if (sameDateValue(input.value, isoDate)) {
-      return true;
-    }
-
-    // Secondo fast path: setter nativo + evento input.
-    selectWholeVaadinInput(input);
-    setNativeInputValue(input, target);
-    await sleep(35);
-
-    if (sameDateValue(input.value, isoDate)) {
-      return true;
-    }
-
-    // Fallback legacy: pulizia e digitazione carattere per carattere,
-    // conservata per le build Vaadin/GWT che ignorano insertText.
-    selectWholeVaadinInput(input);
-
-    try {
-      document.execCommand("delete", false);
-    } catch {}
-
-    if (String(input.value || "").trim()) {
-      try {
-        const setter =
-          Object.getOwnPropertyDescriptor(
-            HTMLInputElement.prototype,
-            "value"
-          )?.set;
-
-        setter?.call(input, "");
-        input.dispatchEvent(
-          new InputEvent("input", {
-            bubbles: true,
-            inputType: "deleteContentBackward"
-          })
-        );
-      } catch {}
-    }
-
-    for (const char of target) {
-      typeVaadinChar(input, char);
-    }
-
-    await sleep(55);
-
-    return sameDateValue(
-      input.value,
-      isoDate
-    );
-  }
-
-  async function setExamDate(examName, reportDate) {
-    const isoDate = normalizeDateValue(reportDate);
-    if (!isoDate) return true;
-
-    setPreferredReportDateForExam(
-      examName,
-      isoDate
-    );
-
-    const visibleRow =
-      await ensureExamRowVisible(
-        examName,
-        2,
-        isoDate
-      );
-
-    if (!visibleRow) {
-      console.error(
-        `Segretario MMG: Data referto "${examName}": nessuna riga Eumed compatibile con Data prescriz. <= ${formatDateForGrid(isoDate)}.`
-      );
-      return false;
-    }
-
-    const target = formatDateForGrid(isoDate);
-    const current = readExamRow(examName)?.[CONFIG.resultDateColumn] || "";
-
-    if (sameDateValue(current, isoDate)) {
-      log("Data già corretta", examName, current);
-      return true;
-    }
-
-    const row = getPreferredExamRow(examName);
-
-    if (!row) {
-      console.error(
-        `Segretario MMG: Data referto "${examName}": nessuna riga trovata.`
-      );
-      return false;
-    }
-    const cells = [...row.querySelectorAll("td.v-grid-cell")];
-
-    const dateCell = cells[CONFIG.resultDateColumn];
-
-    if (!dateCell) {
-      console.error(
-        `Segretario MMG: STOP, cella Data esito non trovata per "${examName}".`
-      );
-      return false;
-    }
-
-    // Apri l'editor direttamente sulla colonna Data esito.
-    // È più affidabile che aprire la riga cliccando sul nome esame.
-    vaadinClick(dateCell);
-
-    let input = await waitForDateInput(dateCell, 650);
-
-    // Alcune build Vaadin richiedono un secondo click sulla cella già
-    // focalizzata prima di materializzare l'editor. Manteniamo il fallback
-    // ma senza pagare 120 ms fissi quando il primo click è sufficiente.
-    if (!input) {
-      vaadinClick(dateCell);
-      input = await waitForDateInput(dateCell, CONFIG.editorWaitMs);
-    }
-
-    if (!input) {
-      logDateEditorDiagnostics(dateCell);
-
-      console.error(
-        "Segretario MMG: STOP, campo Data esito non individuato nell'editor."
-      );
-      return false;
-    }
-
-    const replaced =
-      await replaceVaadinDateInputFast(
-        input,
-        target,
-        isoDate
-      );
-
-    if (!replaced) {
-      console.error(
-        `Segretario MMG: STOP Data referto, input="${input.value}", atteso="${target}".`
-      );
-      return false;
-    }
-
-    // Vaadin 8 DateField non sempre committa con il solo blur.
-    // Enter forza il parsing/commit del valore digitato nel widget GWT.
-    dispatchVaadinKey(input, "keydown", "Enter", "Enter", 13);
-    dispatchVaadinKey(input, "keypress", "Enter", "Enter", 13);
-    dispatchVaadinKey(input, "keyup", "Enter", "Enter", 13);
-
-    input.dispatchEvent(new Event("change", { bubbles: true }));
-    input.dispatchEvent(new FocusEvent("focusout", {
-      bubbles: true,
-      relatedTarget: document.body
-    }));
-    input.blur();
-
-    // Forza anche l'uscita dall'editor della riga, come per il FilterSelect.
-    const commitCell =
-      cells[CONFIG.prescriptionDateColumn ?? 1] ||
-      cells[CONFIG.examNameColumn];
-
-    if (commitCell) {
-      vaadinClick(commitCell);
-    }
-
-    const verifyTimeoutMs =
-      Math.max(
-        CONFIG.commitWaitMs,
-        1400
-      );
-
-    const startedAt = Date.now();
-    let gridDate =
-      readExamRow(examName)?.[CONFIG.resultDateColumn] || "";
-
-    while (
-      !sameDateValue(gridDate, isoDate) &&
-      Date.now() - startedAt < verifyTimeoutMs
-    ) {
-      await sleep(35);
-      gridDate =
-        readExamRow(examName)?.[CONFIG.resultDateColumn] || "";
-    }
-
-    if (!sameDateValue(gridDate, isoDate)) {
-      console.error(
-        `Segretario MMG: STOP Data referto dopo commit, Grid="${gridDate}", atteso="${target}".`
-      );
-      return false;
-    }
-
-    log("Data referto verificata", examName, gridDate);
-    return true;
-  }
-
-  async function resetGridEditorForFieldRetry(examName) {
-    try {
-      const row = getPreferredExamRow(examName);
-      if (!row) return;
-
-      const cells = [...row.querySelectorAll("td.v-grid-cell")];
-      const resetCell =
-        cells[CONFIG.examNameColumn] ||
-        cells[CONFIG.prescriptionDateColumn ?? 1];
-
-      if (resetCell) {
-        vaadinClick(resetCell);
-        await sleep(180);
-      }
-
-      const target = document.activeElement || document.body;
-      dispatchVaadinKey(target, "keydown", "Escape", "Escape", 27);
-      dispatchVaadinKey(target, "keyup", "Escape", "Escape", 27);
-      await sleep(100);
-    } catch {}
-  }
-
-  async function setExamFieldResilient(
-    examName,
-    fieldIndex,
-    gridColumn,
-    value,
-    label,
-    attempts = 3
-  ) {
-    if (value === null || value === undefined || String(value).trim() === "") {
-      return {
-        requested: false,
-        verified: true,
-        label,
-        expected: "",
-        current: ""
-      };
-    }
-
-    const expected = String(value).trim();
-
-    const already =
-      readExamRow(examName)?.[gridColumn]?.trim() || "";
-
-    if (sameNumericValue(already, expected)) {
-      return {
-        requested: true,
-        verified: true,
-        label,
-        expected,
-        current: already
-      };
-    }
-
-    for (let attempt = 1; attempt <= attempts; attempt++) {
-      if (attempt > 1) {
-        await resetGridEditorForFieldRetry(examName);
-      }
-
-      const ok = await setExamField(
-        examName,
-        fieldIndex,
-        gridColumn,
-        expected,
-        label
-      );
-
-      if (ok) {
-        const current =
-          readExamRow(examName)?.[gridColumn]?.trim() || "";
-
-        return {
-          requested: true,
-          verified: true,
-          label,
-          expected,
-          current
-        };
-      }
-
-      // Vaadin può aggiornare la cella leggermente dopo il timeout interno.
-      for (let i = 0; i < 6; i++) {
-        await sleep(150);
-
-        const current =
-          readExamRow(examName)?.[gridColumn]?.trim() || "";
-
-        if (sameNumericValue(current, expected)) {
-          log(
-            `${label} confermato in ritardo`,
-            examName,
-            current
-          );
-
-          return {
-            requested: true,
-            verified: true,
-            label,
-            expected,
-            current
-          };
-        }
-      }
-    }
-
-    const current =
-      readExamRow(examName)?.[gridColumn]?.trim() || "";
-
-    console.warn(
-      `Segretario MMG: ${label} non verificato per "${examName}". ` +
-      `Grid="${current}", atteso="${expected}". La compilazione prosegue.`
-    );
-
-    return {
-      requested: true,
-      verified: false,
-      label,
-      expected,
-      current
-    };
-  }
-
-  async function setExamRecord(item) {
-    if (item.reportDate) {
-      setPreferredReportDateForExam(
-        item.exam,
-        item.reportDate
-      );
-    }
-
-    await ensureExamRowVisible(
-      item.exam,
-      2,
-      item.reportDate || ""
-    );
-
-    // v0.14.1:
-    // FAST PATH: apre UNA sola volta l'editor numerico Vaadin e compila
-    // Min / Max / Valore nello stesso editor. Dopo un unico commit verifica
-    // tutte le celle. Solo i campi non confermati ricadono nel vecchio
-    // percorso resiliente, mantenendo quindi le stesse garanzie di sicurezza.
-    const defs = [
-      {
-        key: "min",
-        label: "Min",
-        fieldIndex: 1,
-        gridColumn: CONFIG.minColumn,
-        value: item.refMin
-      },
-      {
-        key: "max",
-        label: "Max",
-        fieldIndex: 2,
-        gridColumn: CONFIG.maxColumn,
-        value: item.refMax
-      },
-      {
-        key: "value",
-        label: "Valore",
-        fieldIndex: 0,
-        gridColumn: CONFIG.valueColumn,
-        value: item.value
-      }
-    ];
-
-    const fieldResults = {
-      min: null,
-      max: null,
-      value: null
-    };
-
-    const pending = [];
-
-    for (const def of defs) {
-      const expected =
-        def.value === null || def.value === undefined
-          ? ""
-          : String(def.value).trim();
-
-      if (!expected) {
-        fieldResults[def.key] = {
-          requested: false,
-          verified: true,
-          label: def.label,
-          expected: "",
-          current: ""
-        };
-        continue;
-      }
-
-      const current =
-        readExamRow(item.exam)?.[def.gridColumn]?.trim() || "";
-
-      if (sameNumericValue(current, expected)) {
-        fieldResults[def.key] = {
-          requested: true,
-          verified: true,
-          label: def.label,
-          expected,
-          current
-        };
-        continue;
-      }
-
-      pending.push({
-        ...def,
-        expected
-      });
-    }
-
-    if (pending.length) {
-      const preferredColumn =
-        pending.find(x => x.key === "value")?.gridColumn ||
-        pending[0].gridColumn;
-
-      const opened =
-        await openGridEditorForExam(
-          item.exam,
-          preferredColumn,
-          "numeric"
-        );
-
-      if (opened?.fields) {
-        for (const def of pending) {
-          const input =
-            opened.fields[def.fieldIndex];
-
-          if (!input) continue;
-
-          vaadinClick(input);
-          await sleep(25);
-
-          selectWholeVaadinInput(input);
-          await sleep(15);
-
-          // Manteniamo la digitazione legacy che sappiamo essere accettata
-          // da GWT/Vaadin; il guadagno deriva dall'aprire/committare la riga
-          // una sola volta, non dal forzare setter DOM più aggressivi.
-          for (const char of def.expected) {
-            typeVaadinChar(input, char);
-          }
-
-          await sleep(30);
-
-          if (sameNumericValue(input.value, def.expected)) {
-            input.dispatchEvent(
-              new Event("change", { bubbles: true })
-            );
-          }
-        }
-
-        // Un solo commit dell'intera riga.
-        const row =
-          getPreferredExamRow(item.exam) ||
-          opened.row;
-
-        const cells =
-          row
-            ? [...row.querySelectorAll("td.v-grid-cell")]
-            : [];
-
-        const commitCell =
-          cells[CONFIG.examNameColumn] ||
-          cells[CONFIG.prescriptionDateColumn ?? 1];
-
-        if (commitCell) {
-          vaadinClick(commitCell);
-        } else {
-          const active =
-            document.activeElement;
-
-          try {
-            active?.dispatchEvent(
-              new FocusEvent("focusout", {
-                bubbles: true,
-                relatedTarget: document.body
-              })
-            );
-            active?.blur?.();
-          } catch {}
-        }
-
-        const verifyTimeoutMs =
-          Math.max(
-            CONFIG.commitWaitMs + 250,
-            900
-          );
-
-        const startedAt =
-          Date.now();
-
-        let allConfirmed = false;
-
-        while (
-          !allConfirmed &&
-          Date.now() - startedAt < verifyTimeoutMs
-        ) {
-          await sleep(35);
-
-          const currentRow =
-            readExamRow(item.exam);
-
-          allConfirmed =
-            !!currentRow &&
-            pending.every(def =>
-              sameNumericValue(
-                currentRow[def.gridColumn],
-                def.expected
-              )
-            );
-        }
-      }
-
-      // Verifica finale del fast path. Ogni campo rimasto non confermato
-      // usa il percorso resiliente storico, indipendentemente dagli altri.
-      for (const def of pending) {
-        const current =
-          readExamRow(item.exam)?.[def.gridColumn]?.trim() || "";
-
-        if (sameNumericValue(current, def.expected)) {
-          fieldResults[def.key] = {
-            requested: true,
-            verified: true,
-            label: def.label,
-            expected: def.expected,
-            current
-          };
-
-          log(
-            `${def.label} verificato (fast row)`,
-            item.exam,
-            current
-          );
-
-          continue;
-        }
-
-        fieldResults[def.key] =
-          await setExamFieldResilient(
-            item.exam,
-            def.fieldIndex,
-            def.gridColumn,
-            def.expected,
-            def.label,
-            3
-          );
-      }
-    }
-
-    return {
-      exam: item.exam,
-      fields: fieldResults,
-      allVerified:
-        fieldResults.min.verified &&
-        fieldResults.max.verified &&
-        fieldResults.value.verified
-    };
-  }
-
-  async function resetGridEditorForDateRetry(examName) {
-    try {
-      const row = getPreferredExamRow(examName);
-      if (!row) return;
-
-      const cells = [...row.querySelectorAll("td.v-grid-cell")];
-      const resetCell =
-        cells[CONFIG.examNameColumn] ||
-        cells[CONFIG.prescriptionDateColumn ?? 1];
-
-      if (resetCell) {
-        vaadinClick(resetCell);
-        await sleep(220);
-      }
-
-      // Escape aiuta a chiudere eventuali editor GWT rimasti sospesi.
-      const target = document.activeElement || document.body;
-      dispatchVaadinKey(target, "keydown", "Escape", "Escape", 27);
-      dispatchVaadinKey(target, "keyup", "Escape", "Escape", 27);
-      await sleep(120);
-    } catch {}
-  }
-
-  async function setExamDateResilient(
-    examName,
-    reportDate,
-    attempts = 3
-  ) {
-    await ensureExamRowVisible(examName);
-
-    const isoDate = normalizeDateValue(reportDate);
-    if (!isoDate) return true;
-
-    const already =
-      readExamRow(examName)?.[CONFIG.resultDateColumn] || "";
-
-    if (sameDateValue(already, isoDate)) return true;
-
-    for (let attempt = 1; attempt <= attempts; attempt++) {
-      if (attempt > 1) {
-        await resetGridEditorForDateRetry(examName);
-      }
-
-      const ok = await setExamDate(examName, reportDate);
-      if (ok) return true;
-
-      // Prima di riprovare controlla comunque la Grid:
-      // talvolta Vaadin aggiorna in ritardo dopo che setExamDate
-      // ha già concluso il proprio timeout.
-      for (let i = 0; i < 4; i++) {
-        await sleep(120);
-
-        const current =
-          readExamRow(examName)?.[CONFIG.resultDateColumn] || "";
-
-        if (sameDateValue(current, isoDate)) {
-          log(
-            "Data referto confermata in ritardo",
-            examName,
-            current
-          );
-          return true;
-        }
-      }
-    }
-
-    return false;
-  }
-
-  async function setExamRecords(items, onProgress = null) {
-    const completed = [];
-    const fieldStatus = [];
-    const fieldWarnings = [];
-    const dateVerified = [];
-    const dateWarnings = [];
-
-    // v0.14.4: la Data esito resta SEMPRE la prima modifica della riga.
-    // Se Vaadin non rende subito visibile il commit, non generiamo però
-    // immediatamente un warning: il successivo commit dell'editor numerico
-    // può completare anche il DateField rimasto pendente. In quel caso la
-    // data viene ricontrollata dopo Min/Max/Valore e, solo se ancora diversa,
-    // viene eseguito un unico rescue mirato prima del warning finale.
-    for (let i = 0; i < items.length; i++) {
-      const item = items[i];
-      let dateWasImmediatelyVerified = !item.reportDate;
-
-      if (item.reportDate) {
-        onProgress?.(
-          i + 1,
-          items.length,
-          item,
-          "dates"
-        );
-
-        dateWasImmediatelyVerified =
-          await setExamDateResilient(
-            item.exam,
-            item.reportDate,
-            3
-          );
-
-        if (dateWasImmediatelyVerified) {
-          dateVerified.push(item.exam);
-        } else {
-          console.info(
-            `Segretario MMG: Data esito di "${item.exam}" non ancora confermata; ` +
-            "verifica rinviata dopo il commit della riga."
-          );
-        }
-
-        await sleep(20);
-      }
-
-      onProgress?.(
-        i + 1,
-        items.length,
-        item,
-        "values"
-      );
-
-      const status =
-        await setExamRecord(item);
-
-      completed.push(item);
-      fieldStatus.push(status);
-
-      for (const key of ["min", "max", "value"]) {
-        const field = status.fields[key];
-
-        if (
-          field?.requested &&
-          !field.verified
-        ) {
-          fieldWarnings.push({
-            exam: item.exam,
-            field: field.label,
-            expected: field.expected,
-            current: field.current
-          });
-        }
-      }
-
-      // Seconda fase di verifica data: prima osserva se il commit numerico
-      // ha reso visibile la data già inserita. Solo in caso contrario tenta
-      // una singola correzione finale. Questo elimina i falsi warning senza
-      // indebolire la verifica e senza rallentare le righe normali.
-      if (item.reportDate && !dateWasImmediatelyVerified) {
-        const isoDate = normalizeDateValue(item.reportDate);
-        let gridValue = "";
-
-        const becameVisible = await pollUntil(() => {
-          gridValue =
-            readExamRow(item.exam)?.[
-              CONFIG.resultDateColumn
-            ] || "";
-
-          return sameDateValue(gridValue, isoDate)
-            ? gridValue
-            : null;
-        }, 650, 35);
-
-        let finalDateOk = !!becameVisible;
-
-        if (!finalDateOk) {
-          finalDateOk =
-            await setExamDateResilient(
-              item.exam,
-              item.reportDate,
-              1
-            );
-        }
-
-        gridValue =
-          readExamRow(item.exam)?.[
-            CONFIG.resultDateColumn
-          ] || gridValue || "";
-
-        if (finalDateOk || sameDateValue(gridValue, isoDate)) {
-          dateVerified.push(item.exam);
-          log(
-            "Data referto confermata dopo commit riga",
-            item.exam,
-            gridValue
-          );
-        } else {
-          dateWarnings.push({
-            exam: item.exam,
-            expected:
-              formatDateForGrid(
-                item.reportDate
-              ),
-            current: gridValue
-          });
-
-          console.warn(
-            `Segretario MMG: Data esito realmente non verificata per "${item.exam}". ` +
-            `Grid="${gridValue}", atteso="${formatDateForGrid(item.reportDate)}".`
-          );
-        }
-      }
-
-      await sleep(30);
-    }
-
-    return {
-      success: true,
-      completed,
-      fieldStatus,
-      fieldWarnings,
-      dateVerified,
-      dateWarnings
-    };
-  }
-
-
-  // ============================================================
-  // REFERTO LUNGO VAADIN
-  // ============================================================
-
-  function isVisibleElement(el) {
-    if (!el) return false;
-    const r = el.getBoundingClientRect();
-    const s = getComputedStyle(el);
-
-    return (
-      r.width > 0 &&
-      r.height > 0 &&
-      s.display !== "none" &&
-      s.visibility !== "hidden"
-    );
-  }
-
-  async function waitForWritableResultFilter() {
-    const loops = Math.ceil(CONFIG.editorWaitMs / 100);
-
-    for (let i = 0; i < loops; i++) {
-      await sleep(100);
-
-      const inputs = [
-        ...document.querySelectorAll(".v-filterselect-input")
-      ].filter(el =>
-        isVisibleElement(el) &&
-        !el.disabled &&
-        !el.readOnly &&
-        !el.classList.contains("v-filterselect-input-readonly")
-      );
-
-      if (inputs.length === 1) return inputs[0];
-
-      // Nell'editor noto ci sono due filterselect:
-      // il primo editabile = Risultato, il secondo readonly = Eseguito presso.
-      if (inputs.length > 1) return inputs[0];
-    }
-
-    return null;
-  }
-
-  function dispatchLegacyKey(input, type, key, code, keyCode) {
-    const event = new KeyboardEvent(type, {
-      key,
-      code,
-      bubbles: true,
-      cancelable: true
-    });
-
-    for (const prop of ["keyCode", "which", "charCode"]) {
-      try {
-        Object.defineProperty(event, prop, {
-          configurable: true,
-          get: () => keyCode
-        });
-      } catch {}
-    }
-
-    input.dispatchEvent(event);
-  }
-
-  function filterSelectCandidateScore(candidateText, targetText) {
-    const rawCandidate = String(candidateText || "").trim().toUpperCase();
-    const rawTarget = String(targetText || "").trim().toUpperCase();
-
-    // v0.15.33: quando il filtro è un codice CVP/Eumed, il codice della
-    // proposta deve coincidere ESATTAMENTE. Un codice padre/prefisso non deve
-    // poter selezionare un fratello (es. 90.56.3_2 CEA vs 90.56.3_3 GLYPICAN).
-    const codePattern = /^\d{2}\.\d{2}\.[A-Z0-9]+(?:_[A-Z0-9]+)?$/;
-    if (codePattern.test(rawTarget)) {
-      const codes = rawCandidate.match(/\b\d{2}\.\d{2}\.[A-Z0-9]+(?:_[A-Z0-9]+)?\b/g) || [];
-      if (codes.length) {
-        return codes.includes(rawTarget) ? 12000 : 0;
-      }
-    }
-
-    const text = normalizeExamName(candidateText);
-    const target = normalizeExamName(targetText);
-    if (!text || !target) return 0;
-
-    if (text === target) return 10000;
-
-    // Vaadin/GWT puo' aggiungere alla stessa cella codice amministrativo,
-    // spazi o markup non visibili: se il nome catalogo completo e' contenuto
-    // nella proposta, la consideriamo comunque una corrispondenza fortissima.
-    if (text.includes(target)) {
-      return 9000 - Math.min(1000, Math.max(0, text.length - target.length));
-    }
-
-    if (target.includes(text) && text.length >= Math.min(18, target.length)) {
-      return 8000 - Math.min(1000, Math.max(0, target.length - text.length));
-    }
-
-    const tTokens = significantTokens(target);
-    const cTokens = significantTokens(text);
-    if (!tTokens.length || !cTokens.length) return 0;
-
-    const cSet = new Set(cTokens);
-    const matched = tTokens.filter(token => cSet.has(token)).length;
-    const coverage = matched / tTokens.length;
-    const reverse = matched / cTokens.length;
-
-    if (coverage === 1 && reverse >= 0.55) {
-      return 7000 + Math.round(reverse * 500);
-    }
-    if (coverage >= 0.8 && matched >= 3 && reverse >= 0.5) {
-      return 5000 + Math.round(coverage * 500 + reverse * 250);
-    }
-
-    return 0;
-  }
-
-  function findVisibleFilterSelectOption(targetText) {
-    const selectors = [
-      ".v-filterselect-suggestpopup .gwt-MenuItem",
-      ".v-filterselect-suggestpopup td",
-      ".v-filterselect-suggestpopup tr",
-      ".gwt-SuggestBoxPopup .gwt-MenuItem",
-      ".gwt-SuggestBoxPopup td",
-      ".gwt-SuggestBoxPopup tr",
-      ".v-filterselect-suggestmenu .gwt-MenuItem",
-      ".v-filterselect-suggestmenu td",
-      "[role='option']"
-    ];
-
-    const seen = new Set();
-    let best = null;
-    let bestScore = 0;
-
-    for (const selector of selectors) {
-      for (const candidate of document.querySelectorAll(selector)) {
-        if (seen.has(candidate)) continue;
-        seen.add(candidate);
-        if (!isActuallyVisibleInViewport(candidate) && !isVisibleElement(candidate)) continue;
-
-        const score = filterSelectCandidateScore(
-          String(candidate.textContent || "").trim(),
-          targetText
-        );
-        if (!score || score <= bestScore) continue;
-
-        const clickable =
-          candidate.closest(
-            ".gwt-MenuItem, td.gwt-MenuItem, [role='option'], tr"
-          ) || candidate;
-
-        if (clickable.closest(".v-grid-body")) continue;
-
-        best = clickable;
-        bestScore = score;
-      }
-    }
-
-    return best;
-  }
-
-  async function waitForFilterSelectOption(targetText, timeoutMs = 1800) {
-    const loops = Math.ceil(timeoutMs / 100);
-
-    for (let i = 0; i < loops; i++) {
-      const option = findVisibleFilterSelectOption(targetText);
-      if (option) return option;
-      await sleep(100);
-    }
-
-    return null;
-  }
-
-  async function typeFilterText(input, targetText) {
-    vaadinClick(input);
-    await sleep(80);
-    input.select();
-    await sleep(30);
-
-    for (const char of targetText) {
-      typeVaadinChar(input, char);
-    }
-
-    await sleep(220);
-  }
-
-  async function chooseFilterSelectOption(input, targetText) {
-    const wrapper = input.closest(".v-filterselect");
-    const dropButton = wrapper?.querySelector(".v-filterselect-button");
-
-    // 1) Apri la vera tendina e prova a cliccare la voce reale.
-    vaadinClick(input);
-    await sleep(80);
-
-    if (dropButton) {
-      vaadinClick(dropButton);
-      await sleep(180);
-    }
-
-    let option = await waitForFilterSelectOption(targetText, 1000);
-
-    if (option) {
-      vaadinClick(option);
-      await sleep(300);
-
-      // Non richiediamo che il vecchio input conservi il valore:
-      // Vaadin può chiudere/ricreare l'editor subito dopo la selezione.
-      return true;
-    }
-
-    // 2) Filtra digitando e clicca la proposta reale.
-    await typeFilterText(input, targetText);
-    option = await waitForFilterSelectOption(targetText, 1200);
-
-    if (option) {
-      vaadinClick(option);
-      await sleep(300);
-      return true;
-    }
-
-    // 3) Fallback GWT: testo filtrato + ArrowDown + Enter con keyCode/which.
-    // È importante usare gli eventi legacy perché Vaadin 8/GWT spesso
-    // non legge soltanto KeyboardEvent.key.
-    dispatchLegacyKey(input, "keydown", "ArrowDown", "ArrowDown", 40);
-    dispatchLegacyKey(input, "keyup", "ArrowDown", "ArrowDown", 40);
-    await sleep(100);
-
-    dispatchLegacyKey(input, "keydown", "Enter", "Enter", 13);
-    dispatchLegacyKey(input, "keypress", "Enter", "Enter", 13);
-    dispatchLegacyKey(input, "keyup", "Enter", "Enter", 13);
-    await sleep(320);
-
-    // A questo punto la verifica vera viene fatta sulla Grid dal chiamante.
-    return true;
-  }
-
-  async function waitForGridText(examName, column, expectedText, timeoutMs = 3000) {
-    const expected = normalizeExamName(expectedText);
-    const loops = Math.ceil(timeoutMs / 100);
-
-    for (let i = 0; i < loops; i++) {
-      const value = readExamRow(examName)?.[column]?.trim() || "";
-      if (normalizeExamName(value) === expected) return value;
-      await sleep(100);
-    }
-
-    return "";
-  }
-
-  async function setExamResultVediReferto(examName) {
-    await ensureExamRowVisible(examName);
-
-    const current = readExamRow(examName)?.[CONFIG.resultColumn]?.trim() || "";
-    if (normalizeExamName(current) === "VEDI REFERTO") return true;
-
-    for (let attempt = 1; attempt <= 2; attempt++) {
-      const opened = await openGridEditorForExam(examName, CONFIG.resultColumn, "result");
-
-      if (!opened?.filter) {
-        console.error(`Segretario MMG: Risultato "${examName}": editor Risultato non aperto.`);
-        return false;
-      }
-
-      const input = opened.filter;
-      await chooseFilterSelectOption(input, "Vedi referto");
-      await sleep(250);
-
-      // Forza la chiusura/commit dell'editor cliccando una cella non editabile.
-      const freshRow = getPreferredExamRow(examName);
-      const commitCell = freshRow
-        ? [...freshRow.querySelectorAll("td.v-grid-cell")][CONFIG.prescriptionDateColumn]
-        : null;
-
-      if (commitCell) {
-        vaadinClick(commitCell);
-        await sleep(250);
-      }
-
-      const gridResult = await waitForGridText(
-        examName,
-        CONFIG.resultColumn,
-        "Vedi referto",
-        2600
-      );
-
-      if (gridResult) {
-        log("Risultato Vedi referto verificato", examName);
-        return true;
-      }
-
-      if (attempt === 1) {
-        log("Primo tentativo Vedi referto non confermato; riprovo.", examName);
-        await sleep(250);
-      }
-    }
-
-    const currentValue = readExamRow(examName)?.[CONFIG.resultColumn]?.trim() || "";
-    const popups = [
-      ...document.querySelectorAll(
-        ".v-filterselect-suggestpopup, .gwt-SuggestBoxPopup"
-      )
-    ]
-      .filter(isVisibleElement)
-      .map(x => x.outerHTML.slice(0, 6000));
-
-    console.error(
-      `Segretario MMG: STOP Risultato, Grid="${currentValue}", atteso="Vedi referto".`,
-      popups.length ? popups : "Nessun popup FilterSelect visibile"
-    );
-    return false;
-  }
-
-  async function waitForLongReportPopup() {
-    const loops = Math.ceil(CONFIG.editorWaitMs / 100);
-
-    for (let i = 0; i < loops; i++) {
-      await sleep(100);
-
-      const windows = [
-        ...document.querySelectorAll(".v-window[role='dialog'], .v-window")
-      ].filter(isVisibleElement);
-
-      for (const popup of windows.reverse()) {
-        const header =
-          popup.querySelector(".v-window-header")?.textContent?.trim() || "";
-
-        const textarea =
-          popup.querySelector("textarea.v-textarea, textarea");
-
-        if (
-          normalizeExamName(header) === "REFERTO" &&
-          textarea &&
-          isVisibleElement(textarea)
-        ) {
-          return { popup, textarea };
-        }
-      }
-    }
-
-    return null;
-  }
-
-  async function openLongReportPopup(examName) {
-    await ensureExamRowVisible(examName);
-
-    const row = getPreferredExamRow(examName);
-
-    if (!row) {
-      console.error(
-        `Segretario MMG: apertura referto lungo "${examName}": nessuna riga trovata.`
-      );
-      return null;
-    }
-    const cells = [...row.querySelectorAll("td.v-grid-cell")];
-    const cell = cells[CONFIG.longReportButtonColumn];
-
-    if (!cell) {
-      console.error(
-        `Segretario MMG: cella referto lungo ${CONFIG.longReportButtonColumn} assente.`
-      );
-      return null;
-    }
-
-    const button = cell.querySelector(
-      "button, .v-nativebutton, .v-button, [role='button']"
-    );
-
-    if (!button) {
-      console.error("Segretario MMG: pulsante Visualizza referto lungo non trovato.");
-      return null;
-    }
-
-    vaadinClick(button);
-
-    const found = await waitForLongReportPopup();
-
-    if (!found) {
-      console.error("Segretario MMG: popup Referto non comparso.");
-      return null;
-    }
-
-    return found;
-  }
 
   function normalizeLongReportText(text) {
     return String(text ?? "")
       .replace(/\r\n?/g, "\n")
       .replace(/[ \t]+\n/g, "\n")
       .trim();
-  }
-
-  async function closeLongReportPopup(popup) {
-    const closeBox = popup?.querySelector(".v-window-closebox");
-
-    if (!closeBox) {
-      console.error("Segretario MMG: X di chiusura popup Referto non trovata.");
-      return false;
-    }
-
-    vaadinClick(closeBox);
-
-    for (let i = 0; i < 20; i++) {
-      await sleep(100);
-      if (!isVisibleElement(popup)) return true;
-    }
-
-    return !isVisibleElement(popup);
-  }
-
-  async function writeLongReportText(examName, text) {
-    const target = normalizeLongReportText(text);
-
-    if (!target) {
-      console.error("Segretario MMG: referto lungo vuoto.");
-      return false;
-    }
-
-    let opened = await openLongReportPopup(examName);
-    if (!opened) return false;
-
-    const { popup, textarea } = opened;
-
-    vaadinClick(textarea);
-    textarea.focus();
-    textarea.select();
-    await sleep(40);
-
-    let inserted = false;
-
-    try {
-      inserted = document.execCommand("insertText", false, target);
-    } catch {
-      inserted = false;
-    }
-
-    if (!inserted || normalizeLongReportText(textarea.value) !== target) {
-      textarea.value = target;
-      textarea.dispatchEvent(new InputEvent("input", {
-        bubbles: true,
-        inputType: "insertText",
-        data: target
-      }));
-    }
-
-    textarea.dispatchEvent(new Event("change", { bubbles: true }));
-    textarea.dispatchEvent(new FocusEvent("focusout", {
-      bubbles: true,
-      relatedTarget: document.body
-    }));
-    textarea.blur();
-
-    await sleep(250);
-
-    if (normalizeLongReportText(textarea.value) !== target) {
-      console.error("Segretario MMG: testo del referto non presente nel textarea dopo la scrittura.");
-      return false;
-    }
-
-    if (!(await closeLongReportPopup(popup))) {
-      console.error("Segretario MMG: impossibile chiudere il popup Referto.");
-      return false;
-    }
-
-    await sleep(300);
-
-    // Verifica forte: riapri e controlla che Vaadin abbia mantenuto il testo.
-    opened = await openLongReportPopup(examName);
-    if (!opened) return false;
-
-    const persisted =
-      normalizeLongReportText(opened.textarea.value) === target;
-
-    if (!persisted) {
-      console.error(
-        "Segretario MMG: STOP, il testo del referto lungo non è persistito dopo la chiusura."
-      );
-    }
-
-    await closeLongReportPopup(opened.popup);
-    await sleep(200);
-
-    return persisted;
-  }
-
-  async function setExamResultVediRefertoResilient(examName, attempts = 3) {
-    for (let attempt = 1; attempt <= attempts; attempt++) {
-      const ok = await setExamResultVediReferto(examName);
-      if (ok) return true;
-      await resetGridEditorForFieldRetry(examName);
-      await sleep(180);
-    }
-    return false;
-  }
-
-  async function writeLongReportTextResilient(examName, text, attempts = 2) {
-    for (let attempt = 1; attempt <= attempts; attempt++) {
-      const ok = await writeLongReportText(examName, text);
-      if (ok) return true;
-      await resetGridEditorForFieldRetry(examName);
-      await sleep(220);
-    }
-    return false;
-  }
-
-  async function setLongReportRecordDetailed(item) {
-    if (item.reportDate) {
-      setPreferredReportDateForExam(
-        item.exam,
-        item.reportDate
-      );
-    }
-
-    const compatibleRow =
-      await ensureExamRowVisible(
-        item.exam,
-        2,
-        item.reportDate || ""
-      );
-
-    const status = {
-      exam: item.exam,
-      resultVerified: false,
-      textVerified: false,
-      dateVerified: !item.reportDate,
-      warnings: []
-    };
-
-    if (!compatibleRow) {
-      status.warnings.push({
-        exam: item.exam,
-        field: "Data prescriz./riga Eumed"
-      });
-      return status;
-    }
-
-    // Anche per i referti lunghi la Data esito è la PRIMA modifica
-    // effettuata sulla riga.
-    if (item.reportDate) {
-      status.dateVerified =
-        await setExamDateResilient(
-          item.exam,
-          item.reportDate,
-          3
-        );
-
-      if (!status.dateVerified) {
-        status.warnings.push({
-          exam: item.exam,
-          field: "Data esito"
-        });
-      }
-
-      await sleep(100);
-    }
-
-    status.resultVerified =
-      await setExamResultVediRefertoResilient(
-        item.exam,
-        3
-      );
-
-    if (!status.resultVerified) {
-      status.warnings.push({
-        exam: item.exam,
-        field: "Vedi referto"
-      });
-      return status;
-    }
-
-    await sleep(180);
-
-    status.textVerified =
-      await writeLongReportTextResilient(
-        item.exam,
-        item.text,
-        2
-      );
-
-    if (!status.textVerified) {
-      status.warnings.push({
-        exam: item.exam,
-        field: "Testo referto lungo"
-      });
-      return status;
-    }
-
-    return status;
-  }
-
-  async function setLongReportRecord(item) {
-    const status = await setLongReportRecordDetailed(item);
-    return status.resultVerified && status.textVerified;
-  }
-
-  async function setLongReportRecords(items, onProgress = null) {
-    const completed = [];
-
-    for (let i = 0; i < items.length; i++) {
-      onProgress?.(i + 1, items.length, items[i]);
-
-      const ok = await setLongReportRecord(items[i]);
-
-      if (!ok) {
-        return {
-          success: false,
-          completed,
-          failed: items[i]
-        };
-      }
-
-      completed.push(items[i]);
-      await sleep(300);
-    }
-
-    return {
-      success: true,
-      completed
-    };
   }
 
   function normalizeUnit(unit) {
@@ -4516,39 +1855,6 @@
     };
   }
 
-  function parseDirectLine(line) {
-    line = line.trim();
-    if (!line) return null;
-
-    line = line.replace(/^[\-\*\u2022]\s*/, "");
-
-    const match = line.match(
-      /^(.*?)\s*(?:[:=]\s*)?([+-]?\d+(?:[.,]\d+)?)\s*$/
-    );
-
-    if (!match) {
-      return {
-        success: false,
-        original: line,
-        error: "Formato non riconosciuto"
-      };
-    }
-
-    return {
-      success: true,
-      exam: match[1].replace(/[:=]\s*$/, "").trim(),
-      value: normalizeValueString(match[2]),
-      original: line
-    };
-  }
-
-  function parseDirectText(text) {
-    return String(text)
-      .split(/[\n;]+/)
-      .map(parseDirectLine)
-      .filter(Boolean);
-  }
-
   // Split per righe con piccola sovrapposizione tra blocchi
   // per evitare di separare esame e intervallo di riferimento.
   function splitReportText(text, maxChars = CONFIG.reportChunkChars) {
@@ -4600,6 +1906,9 @@
 
     return chunks.length ? chunks : [String(text)];
   }
+
+  // Parser deterministici dei referti, prompt/schema IA e validazione dei risultati.
+
 
   // ============================================================
   // Structured output compatto + split adattivo (v0.8.5)
@@ -4848,161 +2157,6 @@
     const right = lines.slice(Math.max(0, mid - 1)).join("\n");
 
     return [left, right];
-  }
-
-  const OCR_SCHEMA = {
-    type: "object",
-    properties: {
-      text: { type: "string" }
-    },
-    required: ["text"]
-  };
-
-  async function ollamaChatOnce(
-    messages,
-    onProgress = null,
-    numPredict = CONFIG.aiMaxTokens,
-    formatSchema = null
-  ) {
-    const aiRequestStarted = Date.now();
-    await aiModelInitialization;
-    await aiModelSelectionTask;
-    if (!selectedAiModelInfo || selectedAiModelInfo.completion === false) {
-      throw new Error("Scegli un modello IA disponibile nella schermata iniziale. Se Ollama non risponde, avvialo e aggiorna l’elenco.");
-    }
-    if (selectedAiModelInfo.vision === false && messages.some(message => message.images?.length)) {
-      throw new Error("Il modello scelto legge soltanto testo. Torna alla schermata iniziale e seleziona un modello che legga anche immagini.");
-    }
-    return new Promise((resolve, reject) => {
-      try {
-        assertExtensionContext(
-          "connessione a IA/Ollama"
-        );
-      } catch (error) {
-        reject(error);
-        return;
-      }
-
-      const requestId =
-        `mmg-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-
-      let port;
-
-      try {
-        port = chrome.runtime.connect({
-          name: "segretario-mmg-ollama"
-        });
-      } catch (error) {
-        if (isExtensionContextInvalidatedError(error)) {
-          reject(
-            makeExtensionContextError(
-              "connessione a IA/Ollama"
-            )
-          );
-        } else {
-          reject(error);
-        }
-        return;
-      }
-
-      let finished = false;
-
-      function cleanup() {
-        if (finished) return;
-        finished = true;
-        try { port.disconnect(); } catch {}
-      }
-
-      port.onMessage.addListener(message => {
-        if (message?.requestId !== requestId) return;
-
-        if (message.type === "OLLAMA_PROGRESS") {
-          onProgress?.(message);
-          return;
-        }
-
-        if (message.type === "OLLAMA_RESULT") {
-          recordDiagnosticEvent("ia_completata", { durationMs: Date.now() - aiRequestStarted,
-            inputCharacters: messages.reduce((n, item) => n + String(item.content || "").length, 0),
-            outputCharacters: String(message.content || "").length,
-            images: messages.reduce((n, item) => n + (item.images?.length || 0), 0) });
-          const content = message.content;
-          cleanup();
-          resolve(content);
-          return;
-        }
-
-        if (message.type === "OLLAMA_ERROR") {
-          recordDiagnosticEvent("ia_errore", { durationMs: Date.now() - aiRequestStarted });
-          cleanup();
-          reject(
-            new Error(
-              message.message ||
-              "Errore Ollama."
-            )
-          );
-        }
-      });
-
-      port.onDisconnect.addListener(() => {
-        if (finished) return;
-
-        finished = true;
-
-        let lastErrorMessage = "";
-        try {
-          lastErrorMessage =
-            chrome.runtime.lastError?.message || "";
-        } catch {}
-
-        if (
-          !extensionContextIsValid() ||
-          /extension context invalidated/i.test(
-            lastErrorMessage
-          )
-        ) {
-          reject(
-            makeExtensionContextError(
-              "durante l'analisi IA"
-            )
-          );
-          return;
-        }
-
-        reject(
-          new Error(
-            lastErrorMessage ||
-            "Connessione interna all'estensione interrotta durante l'analisi."
-          )
-        );
-      });
-
-      try {
-        port.postMessage({
-          type: "OLLAMA_CHAT",
-          requestId,
-          payload: {
-            model: CONFIG.aiModel,
-            messages,
-            num_predict: numPredict,
-            keep_alive: "30m",
-            format: formatSchema
-          }
-        });
-      } catch (error) {
-        cleanup();
-
-        if (isExtensionContextInvalidatedError(error)) {
-          reject(
-            makeExtensionContextError(
-              "invio richiesta a IA"
-            )
-          );
-        } else {
-          reject(error);
-        }
-      }
-    });
   }
 
   async function ollamaChat(
@@ -6162,39 +3316,6 @@ ${numberedReportText}
     return out;
   }
 
-  function resultIdentityForOverride(item) {
-    const label = cleanModelLabLabel(
-      `${item?.raw_label || ""} ${item?.exam || ""}`
-    );
-
-    const concept = getExamConcept(label);
-    if (concept) return `CONCEPT:${concept}`;
-
-    const catalog = matchCatalog(label);
-    if (catalog?.entry?.code) {
-      return `CATALOG:${catalog.entry.code}`;
-    }
-
-    return "";
-  }
-
-  function applyDeterministicResultOverrides(rawResults, deterministicResults) {
-    if (!deterministicResults?.length) return rawResults;
-
-    const identities = new Set(
-      deterministicResults
-        .map(resultIdentityForOverride)
-        .filter(Boolean)
-    );
-
-    const kept = rawResults.filter(item => {
-      const identity = resultIdentityForOverride(item);
-      return !identity || !identities.has(identity);
-    });
-
-    return [...kept, ...deterministicResults];
-  }
-
   function countReportTerms(reportText, terms) {
     const n = normalizeExamName(reportText);
     return terms.reduce(
@@ -7288,25 +4409,6 @@ ${sourceText}
     if (!list) return true;
 
     return list.some(x => u === x);
-  }
-
-  function conceptsCompatible(aiExam, rawLabel) {
-    const aiConcept = getExamConcept(aiExam);
-    const rawConcept = getExamConcept(rawLabel);
-
-    if (!aiConcept || !rawConcept) {
-      return {
-        ok: true,
-        aiConcept,
-        rawConcept
-      };
-    }
-
-    return {
-      ok: aiConcept === rawConcept,
-      aiConcept,
-      rawConcept
-    };
   }
 
   function chooseResolutionForModelResult(aiExam, rawLabel, unit) {
@@ -9902,44 +7004,7 @@ ${sourceText}
     };
   }
 
-  // ============================================================
-  // FILE LOCALI: PDF / JPEG / PNG
-  // ============================================================
-
-  let pdfJsPromise = null;
-
-  async function getPdfJs() {
-    if (!pdfJsPromise) {
-      const url =
-        extensionUrl(
-          "vendor/pdf.mjs",
-          "caricamento PDF.js"
-        );
-
-      pdfJsPromise = import(url).then(module => {
-        if (module.__SEGRETARIO_PDFJS_STUB__) {
-          throw new Error(
-            "PDF.js non è ancora installato. Esegui una volta INSTALLA_PDFJS.bat " +
-            "nella cartella dell'estensione, poi ricarica l'estensione da chrome://extensions."
-          );
-        }
-
-        if (!module?.getDocument || !module?.GlobalWorkerOptions) {
-          throw new Error("PDF.js locale non valido o incompleto.");
-        }
-
-        module.GlobalWorkerOptions.workerSrc =
-          extensionUrl("vendor/pdf.worker.mjs", "worker PDF.js");
-
-        return module;
-      }).catch(error => {
-        pdfJsPromise = null;
-        throw error;
-      });
-    }
-
-    return pdfJsPromise;
-  }
+  // Ricostruzione delle righe di testo dalle pagine PDF.
 
   function textContentToLines(textContent) {
     const items = (textContent?.items || [])
@@ -9968,393 +7033,8 @@ ${sourceText}
     }).filter(Boolean).join('\n');
   }
 
-  async function canvasToJpegBase64(canvas, quality = 0.92) {
-    const dataUrl = canvas.toDataURL("image/jpeg", quality);
-    return dataUrl.slice(dataUrl.indexOf(",") + 1);
-  }
+  // Analisi per inserimento senza prescrizioni ed elenco prescrizioni.
 
-  async function renderPdfPageToBase64(page) {
-    const baseViewport = page.getViewport({ scale: 1 });
-    const targetWidth = 1800;
-    const scale = Math.min(3.2, Math.max(1.7, targetWidth / baseViewport.width));
-    const viewport = page.getViewport({ scale });
-
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.ceil(viewport.width);
-    canvas.height = Math.ceil(viewport.height);
-
-    const context = canvas.getContext("2d", { alpha: false });
-    context.fillStyle = "white";
-    context.fillRect(0, 0, canvas.width, canvas.height);
-
-    await page.render({
-      canvasContext: context,
-      viewport
-    }).promise;
-
-    return canvasToJpegBase64(canvas, 0.92);
-  }
-
-  async function imageFileToBase64(file) {
-    const bitmap = await createImageBitmap(file);
-
-    try {
-      const maxDimension = CONFIG.imageMaxDimension;
-      const scale = Math.min(
-        1,
-        maxDimension / Math.max(bitmap.width, bitmap.height)
-      );
-
-      const width = Math.max(1, Math.round(bitmap.width * scale));
-      const height = Math.max(1, Math.round(bitmap.height * scale));
-
-      const canvas = document.createElement("canvas");
-      canvas.width = width;
-      canvas.height = height;
-
-      const context = canvas.getContext("2d", { alpha: false });
-      context.fillStyle = "white";
-      context.fillRect(0, 0, width, height);
-      context.drawImage(bitmap, 0, 0, width, height);
-
-      return await canvasToJpegBase64(canvas, 0.93);
-    } finally {
-      bitmap.close?.();
-    }
-  }
-
-  let paddleBrowserPromise = null;
-  let paddleSandboxFrame = null;
-  let paddleSandboxClient = null;
-
-  function base64ToBlob(base64, mime = "image/jpeg") {
-    const binary = atob(String(base64 || ""));
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) {
-      bytes[i] = binary.charCodeAt(i);
-    }
-    return new Blob([bytes], { type: mime });
-  }
-
-  function paddleItemGeometry(item) {
-    const poly = Array.isArray(item?.poly) ? item.poly : [];
-    const xs = poly.map(p => Number(p?.[0])).filter(Number.isFinite);
-    const ys = poly.map(p => Number(p?.[1])).filter(Number.isFinite);
-    if (!xs.length || !ys.length) return { x1:0, x2:0, y1:0, y2:0, h:1, cy:0 };
-    const x1=Math.min(...xs), x2=Math.max(...xs), y1=Math.min(...ys), y2=Math.max(...ys);
-    return { x1,x2,y1,y2,h:Math.max(1,y2-y1),cy:(y1+y2)/2 };
-  }
-
-  function paddleItemsToLayoutText(items, minScore = CONFIG.paddleOcrMinScore) {
-    const clean=(items||[]).map(item=>({
-      text:String(item?.text||"").trim(),
-      score:Number(item?.score ?? 1),
-      ...paddleItemGeometry(item)
-    })).filter(x=>x.text && Number.isFinite(x.score) && x.score>=minScore);
-
-    clean.sort((a,b)=>a.cy-b.cy || a.x1-b.x1);
-    const rows=[];
-    for(const item of clean){
-      let best=null, dist=Infinity;
-      for(const row of rows){
-        const tol=Math.max(7,0.52*Math.max(row.h,item.h));
-        const d=Math.abs(item.cy-row.cy);
-        if(d<=tol && d<dist){best=row;dist=d;}
-      }
-      if(!best) rows.push({cy:item.cy,h:item.h,items:[item]});
-      else {
-        best.items.push(item);
-        const n=best.items.length;
-        best.cy=(best.cy*(n-1)+item.cy)/n;
-        best.h=Math.max(best.h,item.h);
-      }
-    }
-    rows.sort((a,b)=>a.cy-b.cy);
-    const lines=rows.map(row=>row.items.sort((a,b)=>a.x1-b.x1).map(x=>x.text).join("\t"));
-    const avg=clean.length?clean.reduce((s,x)=>s+x.score,0)/clean.length:0;
-    return {text:lines.join("\n").trim(),lines:lines.length,averageScore:avg,items:clean};
-  }
-
-  function destroyPaddleSandbox() {
-    try { paddleSandboxClient?.port?.close?.(); } catch {}
-    try { paddleSandboxFrame?.remove?.(); } catch {}
-    paddleSandboxClient = null;
-    paddleSandboxFrame = null;
-    paddleBrowserPromise = null;
-  }
-
-  async function createPaddleSandboxClient() {
-    assertExtensionContext("PaddleOCR sandbox");
-
-    const sandboxUrl = extensionUrl(CONFIG.paddleSandboxPath, "PaddleOCR sandbox");
-    const bundleUrl = extensionUrl(CONFIG.paddleModulePath, "PaddleOCR bundle");
-
-    // Controllo esplicito del bundle prima di aprire la sandbox.
-    const bundleResponse = await fetch(bundleUrl, { cache: "no-store" });
-    if (!bundleResponse.ok) {
-      throw new Error(`bundle PaddleOCR mancante (${bundleResponse.status})`);
-    }
-
-    const iframe = document.createElement("iframe");
-    iframe.src = sandboxUrl;
-    iframe.setAttribute("aria-hidden", "true");
-    iframe.tabIndex = -1;
-    iframe.style.position = "fixed";
-    iframe.style.width = "1px";
-    iframe.style.height = "1px";
-    iframe.style.left = "-10000px";
-    iframe.style.top = "-10000px";
-    iframe.style.border = "0";
-    iframe.style.opacity = "0";
-    iframe.style.pointerEvents = "none";
-
-    // Lo inseriamo nello shadow root del pannello per non interferire con Eumed.
-    shadow.appendChild(iframe);
-    paddleSandboxFrame = iframe;
-
-    await new Promise((resolve, reject) => {
-      const timer = setTimeout(
-        () => reject(new Error("Timeout caricamento sandbox PaddleOCR.")),
-        20_000
-      );
-      iframe.addEventListener("load", () => {
-        clearTimeout(timer);
-        resolve();
-      }, { once: true });
-      iframe.addEventListener("error", () => {
-        clearTimeout(timer);
-        reject(new Error("Impossibile caricare paddle_sandbox.html."));
-      }, { once: true });
-    });
-
-    const channel = new MessageChannel();
-    const port = channel.port1;
-    const pending = new Map();
-    let sequence = 0;
-
-    port.onmessage = event => {
-      const msg = event.data || {};
-      const waiter = pending.get(msg.id);
-      if (!waiter) return;
-
-      if (msg.type === "READY" || msg.type === "RESULT" || msg.type === "PONG") {
-        pending.delete(msg.id);
-        clearTimeout(waiter.timer);
-        waiter.resolve(msg.result);
-        return;
-      }
-
-      if (msg.type === "ERROR") {
-        pending.delete(msg.id);
-        clearTimeout(waiter.timer);
-        waiter.reject(new Error(msg?.error?.message || "Errore PaddleOCR sandbox."));
-      }
-    };
-    port.start?.();
-
-    function request(type, payload = {}, transfer = [], timeoutMs = 120_000) {
-      return new Promise((resolve, reject) => {
-        const id = `paddle-${Date.now()}-${++sequence}`;
-        const timer = setTimeout(() => {
-          pending.delete(id);
-          reject(new Error(`Timeout PaddleOCR sandbox durante ${type}.`));
-        }, timeoutMs);
-
-        pending.set(id, { resolve, reject, timer });
-
-        try {
-          port.postMessage({ type, id, ...payload }, transfer);
-        } catch (error) {
-          clearTimeout(timer);
-          pending.delete(id);
-          reject(error);
-        }
-      });
-    }
-
-    const initOptions = {
-      detectionModelUrl: extensionUrl(CONFIG.paddleDetModelPath,"modello Paddle detection"),
-      recognitionModelUrl: extensionUrl(CONFIG.paddleRecModelPath,"modello Paddle recognition"),
-      wasmPaths: extensionUrl(CONFIG.paddleWasmPath,"runtime ONNX WASM")
-    };
-
-    iframe.contentWindow.postMessage(
-      {
-        type: "SEGRETARIO_PADDLE_CONNECT",
-        options: initOptions
-      },
-      "*",
-      [channel.port2]
-    );
-
-    await request("INIT", {}, [], 120_000);
-
-    return {
-      port,
-      async predict(blob, options = {}) {
-        const bytes = await blob.arrayBuffer();
-        return request(
-          "PREDICT",
-          {
-            bytes,
-            mime: blob.type || "image/jpeg",
-            options
-          },
-          [bytes],
-          180_000
-        );
-      },
-      async ping() {
-        await request("PING", {}, [], 10_000);
-        return true;
-      }
-    };
-  }
-
-  async function getPaddleBrowserOcr() {
-    if (paddleBrowserPromise) return paddleBrowserPromise;
-
-    paddleBrowserPromise = (async () => {
-      try {
-        const client = await createPaddleSandboxClient();
-        paddleSandboxClient = client;
-        return client;
-      } catch (error) {
-        destroyPaddleSandbox();
-        throw new Error(
-          "PaddleOCR integrato non disponibile nella sandbox Chrome. " +
-          "Esegui INSTALLA_PADDLEOCR_BROWSER.bat, poi VERIFICA_PADDLEOCR_BROWSER.bat, " +
-          "ricarica l'estensione e fai Ctrl+Shift+R su Eumed. Dettaglio: " +
-          (error?.message || "")
-        );
-      }
-    })();
-
-    try {
-      return await paddleBrowserPromise;
-    } catch (error) {
-      paddleBrowserPromise = null;
-      throw error;
-    }
-  }
-
-  async function paddleOcrHealth() {
-    const ocr = await getPaddleBrowserOcr();
-    await ocr.ping();
-    return {
-      ok: true,
-      engine: "PaddleOCR sandbox",
-      model: "PP-OCRv6 tiny"
-    };
-  }
-
-  async function paddleOcrImageBase64(imageBase64, label, progressCallback=null) {
-    progressCallback?.({phase:"paddle_ocr_start",label});
-    const started=performance.now();
-    const ocr=await getPaddleBrowserOcr();
-    const blob=base64ToBlob(imageBase64,"image/jpeg");
-    const results=await ocr.predict(blob,{
-      textRecScoreThresh: CONFIG.paddleOcrMinScore,
-      textDetLimitSideLen: 1800,
-      textDetLimitType: "max"
-    });
-    const result=results?.[0];
-    const layout=paddleItemsToLayoutText(result?.items||[]);
-    if(!layout.text) throw new Error(`PaddleOCR non ha riconosciuto testo in ${label}.`);
-    const elapsed=Number(result?.metrics?.totalMs)||performance.now()-started;
-    progressCallback?.({
-      phase:"paddle_ocr_done",label,lines:layout.lines,
-      averageScore:layout.averageScore,elapsedMs:elapsed,
-      model:"PP-OCRv6 tiny · browser"
-    });
-    return layout.text;
-  }
-
-  async function qwenVisionOcrImageBase64(imageBase64,label,progressCallback=null){
-    const prompt=`Trascrivi fedelmente questa pagina di un referto di laboratorio italiano.\n\nREGOLE:\n- fai SOLO OCR, non interpretare e non fare diagnosi;\n- conserva nomi degli esami, valori, unità, intervalli di riferimento e date;\n- se la pagina contiene una tabella, restituisci UNA RIGA per riga visiva e separa le colonne con TAB;\n- usa la posizione visiva per associare correttamente Esame | Risultato | U.M. | Range;\n- non correggere valori plausibili e non inventare testo illeggibile;\n- nessun markdown.\n\nRestituisci JSON con un solo campo text.`;
-    progressCallback?.({phase:"qwen_ocr_start",label});
-    const content=await ollamaChat(
-      [{role:"user",content:prompt,images:[imageBase64]}],
-      info=>progressCallback?.({phase:"qwen_ocr_stream",label,chars:info?.chars||0}),
-      3600,
-      OCR_SCHEMA
-    );
-    const parsed=extractJSONObject(content);
-    const text=String(parsed?.text||"").trim();
-    if(!text) throw new Error(`IA Vision non ha restituito testo per ${label}.`);
-    progressCallback?.({phase:"qwen_ocr_done",label,chars:text.length});
-    return text;
-  }
-
-  async function extractTextFromPdfFile(file, progressCallback=null, options={}) {
-    const mode=options.mode||"auto"; // auto | paddle | qwen
-    const pdfjs=await getPdfJs();
-    const bytes=new Uint8Array(await file.arrayBuffer());
-    const pdf=await pdfjs.getDocument({data:bytes}).promise;
-    const pageTexts=[];
-    let pagesNeedingOcr=0;
-    const pages=[];
-
-    for(let pageNumber=1;pageNumber<=pdf.numPages;pageNumber++){
-      progressCallback?.({phase:"pdf_text",current:pageNumber,total:pdf.numPages});
-      const page=await pdf.getPage(pageNumber);
-      const textContent=await page.getTextContent();
-      const pageText=textContentToLines(textContent).trim();
-      const usefulChars=pageText.replace(/\s/g,"").length;
-      const needsOcr=mode!=="auto" || usefulChars<CONFIG.pdfTextPageMinChars;
-      if(needsOcr) pagesNeedingOcr++;
-      pages.push({pageNumber,page,pageText,needsOcr});
-    }
-
-    progressCallback?.({phase:"pdf_scan_detected",visionPages:pagesNeedingOcr,total:pdf.numPages,mode});
-    if(pagesNeedingOcr>CONFIG.pdfVisionMaxPages) throw new Error(`Il PDF richiede OCR su ${pagesNeedingOcr} pagine; limite ${CONFIG.pdfVisionMaxPages}.`);
-
-    const failures=[];
-    for(const info of pages){
-      if(!info.needsOcr){
-        pageTexts.push(`=== PAGINA ${info.pageNumber} - TESTO PDF ===\n${info.pageText}`);
-        continue;
-      }
-      const engine=mode==="qwen"?"qwen":"paddle";
-      progressCallback?.({phase:"pdf_ocr",engine,current:info.pageNumber,total:pdf.numPages});
-      const imageBase64=await renderPdfPageToBase64(info.page);
-      try{
-        const text=engine==="qwen"
-          ? await qwenVisionOcrImageBase64(imageBase64,`pagina ${info.pageNumber}/${pdf.numPages}`,progressCallback)
-          : await paddleOcrImageBase64(imageBase64,`pagina ${info.pageNumber}/${pdf.numPages}`,progressCallback);
-        pageTexts.push(`=== PAGINA ${info.pageNumber} - OCR ${engine==="qwen"?"IA":"LETTURA RAPIDA"} ===\n${text}`);
-      }catch(error){
-        failures.push({page:info.pageNumber,error:error?.message||String(error)});
-        if(mode!=="qwen") throw error;
-        pageTexts.push(`=== PAGINA ${info.pageNumber} - OCR IA NON COMPLETATO ===`);
-      }
-    }
-    if(mode==="qwen" && failures.length===pdf.numPages) throw new Error("Lettura con IA fallito su tutte le pagine. "+failures.map(x=>`P${x.page}: ${x.error}`).join(" | "));
-    progressCallback?.({phase:"ocr_complete",mode,pages:pdf.numPages,failures});
-    return pageTexts.join("\n\n").trim();
-  }
-
-  async function extractTextFromImageFile(file, progressCallback=null, options={}) {
-    const mode=options.mode||"paddle";
-    const imageBase64=await imageFileToBase64(file);
-    if(mode==="qwen") return qwenVisionOcrImageBase64(imageBase64,file.name||"immagine",progressCallback);
-    return paddleOcrImageBase64(imageBase64,file.name||"immagine",progressCallback);
-  }
-
-
-
-  // ============================================================
-  // v0.15.13 - alias LAD/FLC e nuovi complessi monoclonali/Bence-Jones
-  // v0.15.12 - preferenze cliniche: <x come x, TSH reflex contestuale, sierologie IgG/IgM
-  // v0.15.11 - audit hardening: comparatori, catalogo, sierologie, retry e guardie writer
-  // v0.15.0 - WORKFLOW REFERTO NON PRESCRITTO
-  // ============================================================
-
-  const WORKFLOW_MODE = {
-    PRESCRIBED: "prescribed",
-    UNPRESCRIBED: "unprescribed",
-    PRESCRIPTION_LIST: "prescription_list"
-  };
 
   // Voci principali della branca 11 Laboratorio ricontrollate nel catalogo
   // locale CVP 2026-10-30. Per i referti composti si crea UNA sola riga Eumed
@@ -12141,21 +8821,6 @@ ${buildReferenceIntervalPrompt()}
       stats:{rawResults:payload.numerici.length,numeric:deduped.length,complex:complex.length,qwenUsed:false,qwenResidualUsed:false,qwenResidualEvidence:0,qwenResidualChars:0}};
   }
 
-  function renderPrescribedTransferBlock(transferText) {
-    if (!transferText) return "";
-    return `<div class="row warning"><b>Da inserire senza prescrizioni</b>
-      <span class="small">Copia questo blocco. Apri Registrazione esiti → Inserimento senza prescrizioni, scegli Referto non prescritto e incollalo nel campo del referto. Controlla l'anteprima prima di inserire.</span>
-      <textarea data-transfer-text readonly aria-label="Blocco da copiare per inserimento senza prescrizioni" style="width:100%;box-sizing:border-box;height:150px;margin-top:8px">${escapeHtml(transferText)}</textarea>
-      <button type="button" data-transfer-copy>Copia blocco</button><span class="small" data-transfer-status role="status"></span></div>`;
-  }
-
-  async function copyPrescribedTransferBlock(field) {
-    const text=String(field?.value || "");
-    if (!text) return false;
-    try { await navigator.clipboard.writeText(text); return true; } catch {}
-    try { field.focus();field.select();return document.execCommand("copy"); } catch {return false;}
-  }
-
   async function extractUnprescribedFromReport(reportText, progressCallback = null) {
     await ensureLabCatalog();
     if (!labCatalog.length) throw new Error("Catalogo laboratorio locale non disponibile.");
@@ -12333,6 +8998,4809 @@ ${buildReferenceIntervalPrompt()}
         qwenResidualNoiseSuppressed: Number(qwenPayload?._suppressedResidualNoise || 0)
       }
     };
+  }
+
+  function directCatalogCodeFromPrescriptionLabel(label) {
+    const raw = String(label || "").toUpperCase();
+    if (!raw) return null;
+
+    // Se l'utente incolla direttamente un codice del catalogo, usalo.
+    const candidates = labCatalog
+      .filter(entry => {
+        const code = String(entry?.code || "").toUpperCase().trim();
+        if (!code || code.length < 4) return false;
+        const escaped = code.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        return new RegExp(`(^|[^A-Z0-9_.-])${escaped}([^A-Z0-9_.-]|$)`, "i").test(raw);
+      });
+
+    return candidates.length === 1 ? candidates[0] : null;
+  }
+
+  function preferredPrescriptionCatalogEntry(label, context = {}) {
+    const raw = sanitizeCreationCatalogAlias(label);
+    const n = normalizeExamName(raw);
+    if (!n) return null;
+
+    const direct = directCatalogCodeFromPrescriptionLabel(raw);
+    if (direct) return direct;
+    const reviewedAliases = {
+  "Colesterolo LDL": "90.13.C_0",
+  "PSA totale": "90.56.9_0",
+  "PSA libero": "90.56.9_0",
+  "Bilirubina totale": "90.10.5_3",
+  "Bilirubina reflex": "90.10.5_3",
+  "Elettroforesi dell'emoglobina": "90.66.7_2",
+  "Emoglobina A2 (HbA2)": "90.66.7_2",
+  "Emoglobina fetale (HbF)": "90.66.7_2",
+  "HbA2": "90.66.7_2",
+  "HbF": "90.66.7_2",
+  "Folati (acido folico)": "90.23.2_2",
+  "Folati": "90.23.2_2",
+  "Anticorpi anti-tireoperossidasi (anti-TPO)": "90.51.4_0",
+  "Anti-TPO": "90.51.4_0",
+  "Troponina cardiaca": "90.82.3_0",
+  "Immunoglobuline IgA totali": "90.69.4_7",
+  "Anticorpi antinucleo (ANA)": "90.52.4_0",
+  "Anticorpi anti-EBV VCA IgM": "91.21.6_0",
+  "Anticorpi anti-EBV VCA IgG": "91.21.6_0",
+  "Anticorpi anti-EBNA IgG": "91.21.6_0",
+  "Pepsinogeno I": "90.38.M_0",
+  "Pepsinogeno II": "90.38.N_0",
+  "Vitamina E (alfa-tocoferolo)": "90.45.2_3",
+  "Osmolalità sierica": "90.34.7_2",
+  "Bicarbonati sierici": "90.10.2_2",
+  "IgG4 sieriche": "90.68.4_5",
+  "G6PD": "90.27.2_0",
+  "G6PD (glucosio-6-fosfato deidrogenasi)": "90.27.2_0",
+  "Anticorpi anticardiolipina IgG": "90.47.5_2",
+  "Anticorpi anticardiolipina IgM": "90.47.5_3",
+  "Anticorpi anti-mitocondrio (AMA)": "90.52.1_0",
+  "Anticorpi anti-LKM1": "90.51.5_0",
+  "Anticorpi anti-SLA/LP": "90.52.5_13",
+  "Anticorpi anti-GBM": "90.48.9_0",
+  "Anticorpi anticentromero": "90.47.F_0",
+  "Anticorpi anti-Jo-1": "90.47.7_0",
+  "Anticorpi anti-Mi-2": "90.52.5_40",
+  "DHEA-S": "90.17.2_0",
+  "Androstenedione": "90.17.3_0",
+  "17-OH progesterone": "90.01.2_0",
+  "Tireoglobulina": "90.41.5_0",
+  "Anticorpi anti-recettore dell'acetilcolina": "90.53.9_0",
+  "Anticorpi anti-GAD65": "90.49.7_0",
+  "Anticorpi anti-IA2": "90.52.5_12",
+  "NSE (enolasi neurone-specifica)": "90.18.4_0",
+  "HBV-DNA quantitativo": "91.16.B_0",
+  "HCV-RNA quantitativo": "91.19.4_0"
+  };
+    const reviewed=Object.entries(reviewedAliases).find(([alias])=>normalizeExamName(alias)===n);
+    if(reviewed) return findCatalogEntryByCode(reviewed[1]);
+    if (["EMOGRUPPO", "GRUPPO SANGUIGNO", "GRUPPO ABO", "GRUPPO AB0", "GRUPPO ABO E RH", "GRUPPO AB0 E RH", "EMOGRUPPO E RH"].includes(n)) return findCatalogEntryByCode("90.65.3_2");
+
+    // Sinonimi operativi della sola lista di prescrizione: non reinterpretare
+    // "albumina glicata" come HbA1c e non alterare i parser dei referti.
+    if (/^(?:GLICEMIA|GLUCOSIO)(?: BASALE| A DIGIUNO)?$/.test(n)) {
+      return findCatalogEntryByCode("90.27.1_2");
+    }
+    if (n === "GLICATA") return findCatalogEntryByCode("90.28.1_0");
+    const routineSynonyms = {
+      "CALCEMIA": "90.11.4_2",
+      "FOSFOREMIA": "90.24.3_2",
+      "FOSFATEMIA": "90.24.3_2",
+      "MAGNESEMIA": "90.32.5_2",
+      "KALIEMIA": "90.37.4_2",
+      "KALEMIA": "90.37.4_2",
+      "POTASSIEMIA": "90.37.4_2",
+      "SODIEMIA": "90.40.4_2",
+      "NATREMIA": "90.40.4_2",
+      "NATRIEMIA": "90.40.4_2",
+      "CLOREMIA": "90.13.3_2",
+      "AZOTEMIA": "90.44.1_6",
+      "URICEMIA": "90.43.5_2",
+      "SIDEREMIA": "90.22.5_2",
+      "ALP": "90.23.5_0",
+      "ALP TOTALE": "90.23.5_0",
+      "ALP OSSEA": "90.24.1_0",
+      "FOSFATASI ALCALINA OSSEA": "90.24.1_0",
+      "FOSFATASI ALCALINA TOTALE": "90.23.5_0"
+    };
+    if (routineSynonyms[n]) return findCatalogEntryByCode(routineSynonyms[n]);
+    // La raccolta temporizzata deve essere esplicita. Non confondere urine
+    // estemporanee, rapporti con creatinina e campioni delle 24 ore.
+    const urinarySynonyms = {
+      SODIURIA: ["90.40.4_3", "90.40.4_4"],
+      NATRIURIA: ["90.40.4_3", "90.40.4_4"],
+      KALIURIA: ["90.37.4_4", "90.37.4_3"],
+      POTASSIURIA: ["90.37.4_4", "90.37.4_3"],
+      FOSFATURIA: ["90.24.3_3", "90.24.3_4"],
+      MAGNESIURIA: ["90.32.5_4", "90.32.5_5"],
+      CLORURIA: ["90.13.3_3", "90.13.3_4"],
+      URICOSURIA: ["90.43.5_3", "90.43.5_4"],
+      CALCIURIA: [null, "90.11.4_3"]
+    };
+    const urinary = n.match(/^(\w+)(?: (24 ?H|24 ORE|DELLE 24 ?H|DELLE 24 ORE|SPOT|ESTEMPORANEA|SEMPLICE|NORMALE))?$/);
+    if (urinary && urinarySynonyms[urinary[1]]) {
+      const timed = /24/.test(urinary[2] || "");
+      const code = urinarySynonyms[urinary[1]][timed ? 1 : 0];
+      if (code) return findCatalogEntryByCode(code);
+    }
+    if (/^(?:ALANINA|ALANINO) AMINO\s*TRANSFERASI$/.test(n)) {
+      return findCatalogEntryByCode("90.04.5_0");
+    }
+    if (/^(?:ASPARTATO|ASPARTICO) AMINO\s*TRANSFERASI$/.test(n)) {
+      return findCatalogEntryByCode("90.09.2_0");
+    }
+
+    const molecular = isMolecularMicrobiologyText(raw) || /CARICA VIRALE|VIREMIA/.test(n);
+
+    // Accorpamenti usati nella prescrizione: diversi dalle singole righe che
+    // possono comparire nei referti di laboratorio.
+    if (!molecular && (/\bCMV\b/.test(n) || n.includes("CITOMEGALOVIRUS"))) {
+      return findCatalogEntryByCode("CMVAB");
+    }
+    if (!molecular && n.includes("TOXOPLAS")) {
+      return findCatalogEntryByCode("TOXOPAB");
+    }
+    if (!molecular && (n.includes("PARVOVIRUS") || /\bB19\b/.test(n))) {
+      return findCatalogEntryByCode("PARVOINF");
+    }
+    if (!molecular && (n.includes("TREPONEMA") || n.includes("SIFIL") || /\bTPHA\b|\bTPPA\b|\bVDRL\b|\bRPR\b/.test(n))) {
+      return findCatalogEntryByCode(n.includes("LIQUOR") ? "91.10.B_3" : "91.10.B_2");
+    }
+    if (!molecular && (/\bHIV\b/.test(n) || n.includes("IMMUNODEFIC"))) {
+      return findCatalogEntryByCode("91.23.F_0");
+    }
+    if (!molecular && (/\bHCV\b/.test(n) || n.includes("EPATITE C")) && !n.includes("ANTIGENE")) {
+      return findCatalogEntryByCode("91.19.5_0");
+    }
+
+    // HBV: se la lista contiene un profilo/multipli marcatori usa il reflex
+    // unico. HBs/HBsAg isolato usa invece HBsAg, come da uso operativo.
+    const isHbv = /\bHBV\b|EPAT(?:ITE)? B/.test(n) || /HBS|HBC|HBE/.test(n);
+    if (!molecular && isHbv) {
+      if (context?.hbvProfile) return findCatalogEntryByCode("91.18.6_0");
+      if (/ANTI\s*HBS|HBSAB|ANTICORPI\s+HBS/.test(n)) return findCatalogEntryByCode("91.18.3_0");
+      if (/ANTI\s*HBE|HBEAB|ANTICORPI\s+HBE/.test(n)) return findCatalogEntryByCode("91.18.2_0");
+      if (/\bHBEAG\b|ANTIGENE\s+HBE/.test(n)) return findCatalogEntryByCode("91.18.4_0");
+      if (/\bHBSAG\b|ANTIGENE\s+HBS|(?:^|\s)HBS(?:\s|$)/.test(n)) return findCatalogEntryByCode("91.18.5_0");
+    }
+
+    return null;
+  }
+
+
+  function getUnclaimedAiEvidence(reportText, parserExtraction) {
+    const layout =
+      parserExtraction?.labLayout ||
+      detectKnownLabLayout(reportText);
+
+    const stripped = stripKnownPageChrome(reportText, layout);
+    const unclaimed = removeConsumedAiLines(stripped, parserExtraction);
+
+    const parsedConcepts = new Set(
+      (parserExtraction?.results || [])
+        .map(item => getExamConcept(`${item?.exam || ""} ${item?.raw_label || ""}`))
+        .filter(Boolean)
+    );
+
+    const longKinds = new Set(
+      (parserExtraction?.longReports || [])
+        .map(item => item?.kind || getLongReportKind(item?.exam || ""))
+        .filter(Boolean)
+    );
+
+    const hasExplicitTargetConcept = concept =>
+      getAvailableExams().some(exam => getExamConcept(exam) === concept);
+
+    const isKnownAuxiliaryLine = line => {
+      const n = normalizeExamName(line);
+      const concept = getExamConcept(line);
+      if (isKnownResidualNonExamLabel(line)) return true;
+      if (parsedConcepts.has("HBA1C") && isHbA1cLabel(line)) return true;
+
+      // Rapporto FLC: dato accessorio delle due catene quando Eumed non ha
+      // una riga dedicata. Non deve far partire un recupero semantico per un
+      // target del tutto assente (es. IgE allergeniche).
+      if (concept === "FLC_RATIO" && !hasExplicitTargetConcept("FLC_RATIO")) {
+        return true;
+      }
+
+      // eGFR è accessorio della creatinina sierica quando questa è già stata
+      // risolta deterministicamente.
+      if (
+        parsedConcepts.has("CREATININE") &&
+        (/\bEGFR\b/.test(n) || n.includes("FILTRAZIONE GLOMERULARE"))
+      ) {
+        return true;
+      }
+
+      // Diuresi/volume delle 24h è contesto del referto Bence-Jones/urinario,
+      // non una nuova prestazione da spiegare semanticamente.
+      if (
+        /\bDIURESI\b/.test(n) &&
+        (longKinds.has("BENCE_JONES") || longKinds.has("URINE"))
+      ) {
+        return true;
+      }
+
+      // Componenti già inglobate in referti complessi non devono riattivare
+      // IA come se fossero un analita sconosciuto autonomo.
+      if (
+        n.includes("COMPONENTE MONOCLONALE") &&
+        (longKinds.has("PROTIDOGRAMMA") || longKinds.has("TIPIZZAZIONE_MONOCLONALE"))
+      ) {
+        return true;
+      }
+
+      return false;
+    };
+
+    const hasPlausibleAnalyteLabel = line => {
+      const raw = String(line || "").trim();
+      // Le righe di continuazione che iniziano direttamente con il valore
+      // (es. "52,0 %" o una seconda unità equivalente) non rappresentano
+      // un nuovo esame e non devono alimentare il semantic rescue.
+      const beforeNumber = raw.split(/[<>≤≥]?\s*[+-]?\d/)[0] || "";
+      return /[A-Za-zÀ-ÿ]{2,}/.test(beforeNumber);
+    };
+
+    const evidenceLines = String(unclaimed || "")
+      .split(/\r?\n/)
+      .map(line => String(line || "").trim())
+      .filter(Boolean)
+      .filter(line => {
+        if (isKnownAuxiliaryLine(line)) return false;
+
+        if (aiLineHasMeasurement(line)) {
+          return hasPlausibleAnalyteLabel(line);
+        }
+
+        const n = normalizeExamName(line);
+        return (
+          /(?:POSITIV\w*|NEGATIV\w*|REATTIV\w*|NON\s+REATTIV\w*|PRESENT\w*|ASSENT\w*|RILEVAT\w*|NON\s+RILEVAT\w*)/.test(n) &&
+          /[A-Z]{2,}/.test(n)
+        );
+      });
+
+    return {
+      text: unclaimed,
+      evidenceLines,
+      count: evidenceLines.length
+    };
+  }
+
+  // Flusso esiti prescritti: piano parser, residui IA, merge e audit.
+
+
+  function cloneResultWithSource(item, source) {
+    return {
+      ...item,
+      workflowSource: source
+    };
+  }
+
+  function enrichEquivalentResult(primary, secondary) {
+    const out = { ...primary };
+
+    if (
+      !out.rangeAvailable &&
+      secondary?.rangeAvailable
+    ) {
+      out.refMin = secondary.refMin;
+      out.refMax = secondary.refMax;
+      out.refUnit = secondary.refUnit;
+      out.originalRefMin = secondary.originalRefMin;
+      out.originalRefMax = secondary.originalRefMax;
+      out.originalRefUnit = secondary.originalRefUnit;
+      out.rangeConverted = secondary.rangeConverted;
+      out.rangeAvailable = true;
+      out.rangeReason = secondary.rangeReason || "";
+    }
+
+    if (
+      !out.comparatorOriginal &&
+      secondary?.comparatorOriginal
+    ) {
+      out.comparatorOriginal =
+        secondary.comparatorOriginal;
+      out.comparatorOperator =
+        secondary.comparatorOperator;
+      out.comparatorOriginalWithUnit =
+        secondary.comparatorOriginalWithUnit;
+    }
+
+    return out;
+  }
+
+  function extractionHasAmbiguityForExam(extraction, exam) {
+    const n = normalizeExamName(exam);
+
+    return [
+      ...(extraction?.uncertain || []),
+      ...(extraction?.rejected || [])
+    ].some(item => {
+      const text = normalizeExamName(
+        `${item?.exam || ""} ${item?.text || ""} ${item?.raw_label || ""} ${item?.reason || ""}`
+      );
+
+      return n && text.includes(n);
+    });
+  }
+
+  function mergeIndependentReadings(
+    parserExtraction,
+    hybridExtraction,
+    targetExams
+  ) {
+    const parserMap =
+      new Map(
+        (parserExtraction?.results || [])
+          .map(item => [item.exam, item])
+      );
+
+    const hybridMap =
+      new Map(
+        (hybridExtraction?.results || [])
+          .map(item => [item.exam, item])
+      );
+
+    const aiResolved =
+      new Set(
+        hybridExtraction?.targetedAiResolvedTargets || []
+      );
+
+    const aiLongResolved =
+      new Set(
+        hybridExtraction?.targetedAiLongResolvedTargets || []
+      );
+
+    const targetSet =
+      new Set(targetExams || []);
+
+    const results = [];
+    const mergeUncertain = [];
+    const stats = {
+      parserOnly: 0,
+      aiOnly: 0,
+      concordant: 0,
+      conflicts: 0,
+      qwenNoiseIgnored: 0
+    };
+
+    // Un parser strutturato produce un dato solo dopo:
+    // matrice biologica -> mapping Eumed -> unità -> conversione -> controllo
+    // delle rappresentazioni equivalenti. Per questo un risultato presente
+    // in parserExtraction è considerato fonte deterministica forte.
+    for (const exam of targetSet) {
+      if (getLongReportKind(exam)) continue;
+
+      const parserItem = parserMap.get(exam);
+      const hybridItem = hybridMap.get(exam);
+      const aiFound = aiResolved.has(exam);
+
+      if (parserItem) {
+        if (hybridItem) {
+          const concept =
+            parserItem.concept ||
+            hybridItem.concept ||
+            getExamConcept(exam);
+
+          const agree =
+            valuesClinicallyEquivalent(
+              parserItem.value,
+              hybridItem.value,
+              concept
+            );
+
+          if (agree && aiFound) {
+            const merged =
+              enrichEquivalentResult(
+                parserItem,
+                hybridItem
+              );
+
+            stats.concordant += 1;
+
+            results.push(
+              cloneResultWithSource(
+                merged,
+                "parser+qwen"
+              )
+            );
+
+            continue;
+          }
+
+          if (!agree) {
+            // IA può leggere un numero vicino appartenente ad altra riga
+            // (es. PLT 299 come AST). Non deve avere potere di veto su un
+            // risultato deterministico strutturato.
+            stats.qwenNoiseIgnored += 1;
+          }
+        } else if (
+          aiFound ||
+          extractionHasAmbiguityForExam(
+            hybridExtraction,
+            exam
+          )
+        ) {
+          stats.qwenNoiseIgnored += 1;
+        }
+
+        stats.parserOnly += 1;
+
+        results.push(
+          cloneResultWithSource(
+            parserItem,
+            "parser"
+          )
+        );
+
+        continue;
+      }
+
+      // Solo se il parser non ha trovato nulla, IA può essere fonte unica.
+      if (hybridItem && aiFound) {
+        stats.aiOnly += 1;
+
+        results.push(
+          cloneResultWithSource(
+            hybridItem,
+            "qwen"
+          )
+        );
+      }
+    }
+
+    const parserLongMap =
+      new Map(
+        (parserExtraction?.longReports || [])
+          .map(item => [item.exam, item])
+      );
+
+    const hybridLongMap =
+      new Map(
+        (hybridExtraction?.longReports || [])
+          .map(item => [item.exam, item])
+      );
+
+    const longReports = [];
+
+    for (const exam of targetSet) {
+      if (!getLongReportKind(exam)) continue;
+
+      const parserItem = parserLongMap.get(exam);
+      const hybridItem = hybridLongMap.get(exam);
+      const aiFound = aiLongResolved.has(exam);
+
+      if (parserItem?.text) {
+        longReports.push({
+          ...parserItem,
+          workflowSource:
+            aiFound ? "parser+qwen" : "parser"
+        });
+        continue;
+      }
+
+      if (hybridItem?.text) {
+        longReports.push({
+          ...hybridItem,
+          workflowSource:
+            aiFound ? "qwen" : "parser"
+        });
+      }
+    }
+
+    function itemCoveredByAcceptedResult(item) {
+      const itemText =
+        `${item?.exam || ""} ${item?.text || ""} ` +
+        `${item?.raw_label || ""} ${item?.catalogName || ""}`;
+
+      const itemName =
+        normalizeExamName(
+          item?.exam ||
+          item?.text ||
+          item?.catalogName ||
+          ""
+        );
+
+      const itemConcept =
+        getExamConcept(itemText);
+
+      const itemSpecimen =
+        detectSpecimen(
+          item?.raw_label ||
+          item?.exam ||
+          item?.text ||
+          ""
+        );
+
+      return results.some(result => {
+        const resultName =
+          normalizeExamName(result?.exam || "");
+
+        if (
+          itemName &&
+          resultName &&
+          (
+            itemName === resultName ||
+            itemName.includes(resultName) ||
+            resultName.includes(itemName)
+          )
+        ) {
+          return true;
+        }
+
+        const resultConcept =
+          getExamConcept(
+            `${result?.exam || ""} ${result?.raw_label || ""}`
+          );
+
+        if (
+          !itemConcept ||
+          !resultConcept ||
+          itemConcept !== resultConcept
+        ) {
+          return false;
+        }
+
+        const resultSpecimen =
+          detectSpecimen(
+            result?.raw_label ||
+            result?.exam ||
+            ""
+          );
+
+        if (
+          itemSpecimen &&
+          resultSpecimen &&
+          itemSpecimen !== resultSpecimen
+        ) {
+          return false;
+        }
+
+        return true;
+      });
+    }
+
+    const recognizedNotInGrid =
+      dedupeRecognizedNotInGrid([
+        ...(parserExtraction?.recognizedNotInGrid || []),
+        ...(hybridExtraction?.recognizedNotInGrid || [])
+      ]).filter(
+        item => !itemCoveredByAcceptedResult(item)
+      );
+
+    const seenAmbiguous = new Set();
+    const uncertain = [];
+
+    for (const item of [
+      ...mergeUncertain,
+      ...(hybridExtraction?.uncertain || [])
+    ]) {
+      // Se il parser deterministico ha già fornito il risultato accettato,
+      // non mostrare come ambiguità il rumore generato dal secondo lettore.
+      if (itemCoveredByAcceptedResult(item)) continue;
+
+      const key = normalizeExamName(
+        `${item?.text || item?.exam || ""} ${item?.reason || ""}`
+      );
+
+      if (key && seenAmbiguous.has(key)) continue;
+      if (key) seenAmbiguous.add(key);
+      uncertain.push(item);
+    }
+
+    const hasAcceptedBilirubinReflex = results.some(result =>
+      getExamConcept(`${result?.exam || ""} ${result?.raw_label || ""}`) === "BILIRUBIN_TOTAL" &&
+      normalizeExamName(result?.exam || "").includes("BILIRUBINA REFLEX")
+    );
+
+    function isBilirubinNoise(item) {
+      if (!hasAcceptedBilirubinReflex) return false;
+
+      const concept = getExamConcept(
+        `${item?.exam || ""} ${item?.text || ""} ${item?.raw_label || ""} ${item?.catalogName || ""}`
+      );
+
+      return [
+        "BILIRUBIN_TOTAL",
+        "BILIRUBIN_DIRECT",
+        "BILIRUBIN_INDIRECT"
+      ].includes(concept);
+    }
+
+    const filteredUncertain = uncertain.filter(
+      item => !isBilirubinNoise(item)
+    );
+
+    const rejected =
+      (hybridExtraction?.rejected || [])
+        .filter(
+          item =>
+            !itemCoveredByAcceptedResult(item) &&
+            !isBilirubinNoise(item)
+        );
+
+    const filteredRecognizedNotInGrid =
+      recognizedNotInGrid.filter(
+        item => !isBilirubinNoise(item)
+      );
+
+    return {
+      results,
+      longReports,
+      recognizedNotInGrid: filteredRecognizedNotInGrid,
+      rejected,
+      uncertain: filteredUncertain,
+      targetedAiTargets: [...targetSet],
+      targetedAiBatches:
+        hybridExtraction?.targetedAiBatches || 0,
+      targetedAiResolvedTargets:
+        hybridExtraction?.targetedAiResolvedTargets || [],
+      targetedAiLongResolvedTargets:
+        hybridExtraction?.targetedAiLongResolvedTargets || [],
+      longReportAiFallbacks:
+        hybridExtraction?.longReportAiFallbacks || 0,
+      labLayout:
+        parserExtraction?.labLayout ||
+        hybridExtraction?.labLayout ||
+        "",
+      labLayoutName:
+        parserExtraction?.labLayoutName ||
+        hybridExtraction?.labLayoutName ||
+        "",
+      reportDate:
+        parserExtraction?.reportDate ||
+        hybridExtraction?.reportDate ||
+        "",
+      reportDateEvidence:
+        parserExtraction?.reportDateEvidence ||
+        hybridExtraction?.reportDateEvidence ||
+        "",
+      workflowStats: stats
+    };
+  }
+
+  function emptyHybridExtraction(parserExtraction = null) {
+    return {
+      results: [],
+      longReports: [],
+      recognizedNotInGrid: [],
+      rejected: [],
+      uncertain: [],
+      targetedAiBatches: 0,
+      targetedAiTargets: [],
+      targetedAiResolvedTargets: [],
+      targetedAiLongResolvedTargets: [],
+      longReportAiFallbacks: 0,
+      labLayout: parserExtraction?.labLayout || "",
+      labLayoutName: parserExtraction?.labLayoutName || "",
+      reportDate: parserExtraction?.reportDate || "",
+      reportDateEvidence:
+        parserExtraction?.reportDateEvidence || ""
+    };
+  }
+
+  function residualTargetHasTextAnchor(reportText, exam) {
+    const normalizedReport = normalizeExamName(reportText);
+    if (!normalizedReport) return false;
+
+    const wordSet = new Set(
+      normalizedReport
+        .split(/\s+/)
+        .filter(Boolean)
+    );
+
+    const terms = targetConceptTerms(exam)
+      .map(normalizeExamName)
+      .filter(Boolean);
+
+    // Se il resolver non conosce ancora sinonimi affidabili per questo esame,
+    // non usiamo il gate: IA resta disponibile come rete di sicurezza.
+    if (!terms.length) return null;
+
+    for (const term of terms) {
+      // Sigle brevi (TSH, AST, ALT, WBC, RBC...) devono comparire come token
+      // autonomi: evita falsi match dentro parole più lunghe.
+      if (!term.includes(" ") && term.length <= 4) {
+        if (wordSet.has(term)) return true;
+        continue;
+      }
+
+      if (normalizedReport.includes(term)) return true;
+    }
+
+    return false;
+  }
+
+  function shouldSendResidualTargetToQwen(reportText, exam, knownLayout) {
+    // Su layout ignoti IA deve continuare a vedere tutti i target irrisolti.
+    if (!knownLayout) {
+      return { send: true, reason: "unknown_layout" };
+    }
+
+    const hasAnchor = residualTargetHasTextAnchor(reportText, exam);
+
+    if (hasAnchor === null) {
+      return { send: true, reason: "no_known_aliases" };
+    }
+
+    if (hasAnchor) {
+      return { send: true, reason: "text_anchor" };
+    }
+
+    return { send: false, reason: "no_text_anchor" };
+  }
+
+  async function prepareResidualQwenPlan(
+    reportText,
+    targetExams,
+    progressCallback = null
+  ) {
+    const startedAt = Date.now();
+
+    const targets =
+      (targetExams || []).filter(Boolean);
+
+    const parserExtraction =
+      await extractFromReport(
+        reportText,
+        info =>
+          progressCallback?.({
+            ...info,
+            analysisStage: "parser"
+          }),
+        {
+          deterministicOnly: true
+        }
+      );
+
+    const strongResolved =
+      collectStrongResolvedTargets(
+        parserExtraction,
+        targets
+      );
+
+    const unresolvedTargets =
+      targets.filter(
+        exam => !strongResolved.has(exam)
+      );
+
+    // v0.14.2: sui layout di laboratorio noti il parser deterministico ha
+    // già letto l'intero referto strutturato. IA viene quindi chiamato
+    // soltanto per un target residuo se nel testo esiste almeno un'ancora
+    // lessicale plausibile (nome, sinonimo o componente del referto lungo).
+    // Se non esiste alcun indizio, inviare comunque il nome dell'esame a
+    // IA tende a produrre associazioni spurie e spreca decine di secondi.
+    // Per layout sconosciuti manteniamo invece il comportamento prudente
+    // precedente e lasciamo tutti i residui a IA.
+    const knownLayout =
+      parserExtraction?.labLayout ||
+      detectKnownLabLayout(reportText);
+
+    const skippedNoEvidenceTargets = [];
+    const residualTargets = [];
+    const semanticRescueTargets = [];
+    const unclaimedEvidence = getUnclaimedAiEvidence(
+      reportText,
+      parserExtraction
+    );
+
+    for (const exam of unresolvedTargets) {
+      const gate = shouldSendResidualTargetToQwen(
+        reportText,
+        exam,
+        knownLayout
+      );
+
+      if (gate.send) {
+        residualTargets.push(exam);
+      } else if (
+        gate.reason === "no_text_anchor" &&
+        unclaimedEvidence.count > 0
+      ) {
+        // v0.15.15: se il parser ha lasciato righe di laboratorio reali non
+        // consumate, IA può tentare un'associazione SEMANTICA anche se il
+        // target non condivide parole note con la riga. Il resolver è
+        // target-bound, quindi non può inventare una prestazione diversa.
+        residualTargets.push(exam);
+        semanticRescueTargets.push(exam);
+      } else {
+        skippedNoEvidenceTargets.push(exam);
+      }
+    }
+
+    const residualText =
+      residualTargets.length
+        ? buildResidualAiText(
+            reportText,
+            parserExtraction,
+            residualTargets
+          )
+        : "";
+
+    const strongLongKinds = [
+      ...new Set(
+        (parserExtraction?.longReports || [])
+          .filter(item =>
+            strongResolved.has(item?.exam)
+          )
+          .map(item => item?.kind)
+          .filter(Boolean)
+      )
+    ];
+
+    const plan = {
+      reportText,
+      targets,
+      parserExtraction,
+      strongResolved,
+      unresolvedTargets,
+      residualTargets,
+      skippedNoEvidenceTargets,
+      semanticRescueTargets,
+      unclaimedEvidenceCount: unclaimedEvidence.count,
+      residualText,
+      strongLongKinds,
+      parserMs: Date.now() - startedAt
+    };
+
+    progressCallback?.({
+      phase: "residual_plan",
+      analysisStage: "planner",
+      totalTargets: targets.length,
+      strongResolved:
+        strongResolved.size,
+      unresolvedTargets,
+      unresolvedCount:
+        unresolvedTargets.length,
+      residualTargets,
+      residualCount:
+        residualTargets.length,
+      skippedNoEvidenceTargets,
+      skippedNoEvidenceCount:
+        skippedNoEvidenceTargets.length,
+      semanticRescueTargets,
+      semanticRescueCount:
+        semanticRescueTargets.length,
+      unclaimedEvidenceCount:
+        unclaimedEvidence.count,
+      originalChars:
+        String(reportText || "").length,
+      aiChars:
+        residualText.length,
+      parserMs: plan.parserMs
+    });
+
+    return plan;
+  }
+
+  async function runResidualQwenFromPlan(
+    plan,
+    progressCallback = null
+  ) {
+    const qwenStartedAt = Date.now();
+
+    let hybridExtraction =
+      emptyHybridExtraction(
+        plan.parserExtraction
+      );
+
+    if (plan.residualTargets.length) {
+      hybridExtraction =
+        await extractFromReport(
+          plan.reportText,
+          info =>
+            progressCallback?.({
+              ...info,
+              analysisStage: "qwen"
+            }),
+          {
+            deterministicOnly: false,
+            aiTargetsOverride:
+              plan.residualTargets,
+            aiReportTextOverride:
+              plan.residualText,
+            skipLongReportAiKinds:
+              plan.strongLongKinds
+          }
+        );
+    }
+
+    const merged =
+      mergeIndependentReadings(
+        plan.parserExtraction,
+        hybridExtraction,
+        plan.targets
+      );
+
+    merged.strongParserResolvedCount =
+      plan.strongResolved.size;
+    merged.residualAiTargetCount =
+      plan.residualTargets.length;
+    merged.residualAiTargets =
+      plan.residualTargets;
+    merged.unresolvedAfterParserCount =
+      (plan.unresolvedTargets || plan.residualTargets || []).length;
+    merged.aiSkippedNoEvidenceCount =
+      (plan.skippedNoEvidenceTargets || []).length;
+    merged.aiSkippedNoEvidenceTargets =
+      plan.skippedNoEvidenceTargets || [];
+    merged.aiSemanticRescueCount =
+      (plan.semanticRescueTargets || []).length;
+    merged.aiSemanticRescueTargets =
+      plan.semanticRescueTargets || [];
+    merged.aiUnclaimedEvidenceCount =
+      plan.unclaimedEvidenceCount || 0;
+    merged.aiInputChars =
+      plan.residualText.length;
+    merged.originalInputChars =
+      String(plan.reportText || "").length;
+    merged.aiInputReductionPercent =
+      String(plan.reportText || "").length
+        ? Math.max(
+            0,
+            Math.round(
+              100 -
+              (
+                plan.residualText.length /
+                String(plan.reportText || "").length
+              ) * 100
+            )
+          )
+        : 0;
+
+    const qwenMs =
+      plan.residualTargets.length
+        ? Date.now() - qwenStartedAt
+        : 0;
+
+    merged.parserMs = plan.parserMs || 0;
+    merged.qwenMs = qwenMs;
+
+    return {
+      parserExtraction:
+        plan.parserExtraction,
+      hybridExtraction,
+      merged,
+      strongResolved:
+        plan.strongResolved,
+      unresolvedTargets:
+        plan.unresolvedTargets || plan.residualTargets,
+      residualTargets:
+        plan.residualTargets,
+      skippedNoEvidenceTargets:
+        plan.skippedNoEvidenceTargets || [],
+      residualText:
+        plan.residualText,
+      parserMs:
+        plan.parserMs || 0,
+      qwenMs
+    };
+  }
+
+  async function runResidualQwenAnalysis(
+    reportText,
+    targetExams,
+    progressCallback = null
+  ) {
+    const plan =
+      await prepareResidualQwenPlan(
+        reportText,
+        targetExams,
+        progressCallback
+      );
+
+    return await runResidualQwenFromPlan(
+      plan,
+      progressCallback
+    );
+  }
+
+  function collectRawBilirubinMeasurements(reportText) {
+    const layout = detectKnownLabLayout(reportText);
+    let raw = [];
+
+    if (layout === "AOU_PADOVA") {
+      raw = extractAouPadovaResults(reportText);
+    } else if (layout === "ULSS6_SCHIAVONIA") {
+      raw = [
+        ...extractSpecimenAnchoredResults(reportText),
+        ...extractUlss6DirectResults(reportText)
+      ];
+    } else {
+      raw = extractSpecimenAnchoredResults(reportText);
+    }
+
+    // Integra eventuali frazioni bilirubiniche senza prefisso s-/p-
+    // (frequente in alcuni referti SYNLAB).
+    for (const line of cleanReportLines(reportText)) {
+      const m = line.match(
+        /^(Bilirubina\s+(?:Totale|Diretta|Indiretta|Coniugata|Non\s+Coniugata))\s+([<>≤≥]?\s*[+-]?\d+(?:[.,]\d+)?)\s+(mg\/dL|u?mol\/L|µmol\/L|μmol\/L)/i
+      );
+
+      if (!m) continue;
+
+      raw.push({
+        exam: m[1],
+        raw_label: m[1],
+        value: m[2].replace(/\s+/g, ""),
+        unit: m[3],
+        evidence: line
+      });
+    }
+
+    const groups = new Map();
+
+    for (const item of raw) {
+      const specimen =
+        detectSpecimen(item?.raw_label || item?.exam || "");
+
+      if (specimen === "URINE") continue;
+
+      const concept =
+        getExamConcept(
+          `${item?.exam || ""} ${item?.raw_label || ""}`
+        );
+
+      if (
+        ![
+          "BILIRUBIN_TOTAL",
+          "BILIRUBIN_DIRECT",
+          "BILIRUBIN_INDIRECT"
+        ].includes(concept)
+      ) {
+        continue;
+      }
+
+      const rawValue =
+        String(item?.value || "")
+          .replace(/^[<>≤≥]\s*/, "")
+          .trim();
+
+      if (!/^[+-]?\d+(?:[.,]\d+)?$/.test(rawValue)) {
+        continue;
+      }
+
+      const converted =
+        convertMeasurement(
+          concept,
+          rawValue,
+          String(item?.unit || "")
+        );
+
+      if (!converted.ok) continue;
+
+      if (!groups.has(concept)) {
+        groups.set(concept, []);
+      }
+
+      groups.get(concept).push({
+        value: converted.value,
+        unit: converted.unit
+      });
+    }
+
+    const output = {};
+
+    for (const [concept, items] of groups.entries()) {
+      if (!items.length) continue;
+
+      const first = items[0];
+
+      const agree =
+        items.every(item =>
+          valuesClinicallyEquivalent(
+            item.value,
+            first.value,
+            concept
+          )
+        );
+
+      if (agree) {
+        output[concept] = first;
+      }
+    }
+
+    return output;
+  }
+
+  function buildCompositeExamDetails(
+    reportText,
+    mergedExtraction
+  ) {
+    const output = [];
+
+    const bilirubinResult =
+      (mergedExtraction?.results || [])
+        .find(item =>
+          getExamConcept(
+            `${item?.exam || ""} ${item?.raw_label || ""}`
+          ) === "BILIRUBIN_TOTAL" &&
+          normalizeExamName(item?.exam || "")
+            .includes("BILIRUBINA REFLEX")
+        );
+
+    if (bilirubinResult) {
+      const parts =
+        collectRawBilirubinMeasurements(reportText);
+
+      const total = parts.BILIRUBIN_TOTAL;
+      const direct = parts.BILIRUBIN_DIRECT;
+      const indirect = parts.BILIRUBIN_INDIRECT;
+
+      if (direct || indirect) {
+        const lines = [];
+
+        if (total) {
+          lines.push(
+            `Bilirubina totale: ${total.value} ${total.unit}`
+          );
+        }
+
+        if (direct) {
+          lines.push(
+            `Bilirubina diretta/coniugata: ${direct.value} ${direct.unit}`
+          );
+        }
+
+        if (indirect) {
+          lines.push(
+            `Bilirubina indiretta/non coniugata: ${indirect.value} ${indirect.unit}`
+          );
+        }
+
+        output.push({
+          exam: bilirubinResult.exam,
+          kind: "BILIRUBINA_COMPONENTI",
+          text: lines.join("\n")
+        });
+      }
+    }
+
+    return output;
+  }
+
+  function buildStrongParserWriteSet(
+    plan
+  ) {
+    const strong =
+      plan?.strongResolved ||
+      new Set();
+
+    const results =
+      (plan?.parserExtraction?.results || [])
+        .filter(item =>
+          strong.has(item?.exam) &&
+          !getLongReportKind(item?.exam)
+        )
+        .map(item => ({
+          ...item,
+          workflowSource: "parser"
+        }));
+
+    const longReports =
+      (plan?.parserExtraction?.longReports || [])
+        .filter(item =>
+          strong.has(item?.exam) &&
+          !!String(item?.text || "").trim()
+        )
+        .map(item => ({
+          ...item,
+          workflowSource: "parser"
+        }));
+
+    const parserOnlyMerged =
+      mergeIndependentReadings(
+        plan.parserExtraction,
+        emptyHybridExtraction(
+          plan.parserExtraction
+        ),
+        plan.targets
+      );
+
+    const compositeDetails =
+      buildCompositeExamDetails(
+        plan.reportText,
+        parserOnlyMerged
+      );
+
+    return {
+      results,
+      longReports,
+      compositeDetails
+    };
+  }
+
+  function filterPostQwenWriteSet(
+    merged,
+    strongResolved,
+    alreadyCompletedComposite = []
+  ) {
+    const strong =
+      strongResolved ||
+      new Set();
+
+    const results =
+      (merged?.results || [])
+        .filter(item =>
+          !strong.has(item?.exam) &&
+          item?.workflowSource === "qwen"
+        );
+
+    const longReports =
+      (merged?.longReports || [])
+        .filter(item =>
+          !strong.has(item?.exam) &&
+          item?.workflowSource === "qwen"
+        );
+
+    const completedCompositeKeys =
+      new Set(
+        (alreadyCompletedComposite || [])
+          .map(item =>
+            normalizeExamName(
+              `${item?.exam || ""}|${item?.text || ""}`
+            )
+          )
+      );
+
+    return {
+      results,
+      longReports,
+      completedCompositeKeys
+    };
+  }
+
+  function auditItemName(item) {
+    return String(
+      item?.exam ||
+      item?.raw_label ||
+      item?.text ||
+      item?.catalogName ||
+      item?.name ||
+      ""
+    ).trim();
+  }
+
+  function buildEumedAudit(extraction, reportText = "") {
+    const targetExams = (extraction?.targetedAiTargets || []).filter(Boolean);
+    const normalizedReport =
+      normalizeExamName(reportText);
+
+    function targetHasReportEvidence(exam) {
+      if (!normalizedReport) return true;
+
+      const terms =
+        [...targetConceptTerms(exam)]
+          .map(normalizeExamName)
+          .filter(term => term && term.length >= 3);
+
+      return terms.some(term =>
+        normalizedReport.includes(term)
+      );
+    }
+
+    const presentLongKinds = new Set(
+      targetExams
+        .map(getLongReportKind)
+        .filter(Boolean)
+    );
+
+    const hasCreatinineTarget = targetExams.some(
+      exam => getExamConcept(exam) === "CREATININE"
+    );
+
+    const shouldSuppressComponentWarning = item => {
+      const text = `${auditItemName(item)} ${item?.reason || ""}`;
+      const n = normalizeExamName(text);
+
+      if (isLongReportComponent(text, presentLongKinds)) {
+        return true;
+      }
+
+      // eGFR è informazione accessoria della creatinina sierica e non una
+      // prestazione autonoma quando in Eumed esiste già CREATININA.
+      if (
+        hasCreatinineTarget &&
+        (
+          /\bEGFR\b/.test(n) ||
+          n.includes("FILTRAZIONE GLOMERULARE")
+        )
+      ) {
+        return true;
+      }
+
+      return false;
+    };
+
+    const presentInReportAbsentEumed =
+      (extraction?.recognizedNotInGrid || [])
+        .filter(item => !shouldSuppressComponentWarning(item))
+        .map(item => ({
+          name: auditItemName(item),
+          detail:
+            item?.value
+              ? `${item.value}${item.unit ? " " + item.unit : ""}`
+              : ""
+        }))
+        .filter(x => x.name);
+
+    const rawAmbiguousItems = [
+      ...(extraction?.uncertain || []).map(item => ({
+        name: auditItemName(item) || "Dato non risolto",
+        reason: String(item?.reason || "").trim()
+      })),
+      ...(extraction?.rejected || []).map(item => ({
+        name: auditItemName(item) || "Dato rifiutato",
+        reason: String(item?.reason || "").trim()
+      }))
+    ]
+      .filter(item => !shouldSuppressComponentWarning(item))
+      .filter(item => {
+        // Se IA propone un target Eumed ma nel referto non compare
+        // nemmeno una delle sue ancore lessicali, il risultato rifiutato
+        // è rumore del modello: va classificato come "non trovato",
+        // non come esame ambiguo/non validabile.
+        const itemName =
+          normalizeExamName(item.name);
+
+        const matchingTarget =
+          targetExams.find(exam => {
+            const targetName =
+              normalizeExamName(exam);
+
+            if (
+              itemName &&
+              targetName &&
+              (
+                itemName === targetName ||
+                itemName.includes(targetName) ||
+                targetName.includes(itemName)
+              )
+            ) {
+              return true;
+            }
+
+            const itemConcept =
+              getExamConcept(item.name);
+            const targetConcept =
+              getExamConcept(exam);
+
+            return (
+              itemConcept &&
+              targetConcept &&
+              itemConcept === targetConcept
+            );
+          });
+
+        if (
+          matchingTarget &&
+          !targetHasReportEvidence(
+            matchingTarget
+          )
+        ) {
+          return false;
+        }
+
+        return true;
+      });
+
+    const ambiguousItems = [];
+    const seenAmbiguous = new Set();
+
+    for (const item of rawAmbiguousItems) {
+      const key = normalizeExamName(`${item.name}|${item.reason}`);
+      if (seenAmbiguous.has(key)) continue;
+      seenAmbiguous.add(key);
+      ambiguousItems.push(item);
+    }
+
+    const resolvedNames = new Set(
+      [
+        ...(extraction?.results || []).map(x => x?.exam),
+        ...(extraction?.longReports || []).map(x => x?.exam)
+      ]
+        .filter(Boolean)
+        .map(normalizeExamName)
+    );
+
+    const ambiguousText = normalizeExamName(
+      ambiguousItems
+        .map(x => `${x.name} ${x.reason}`)
+        .join(" ")
+    );
+
+    const eumedNotFound = targetExams
+      .filter(exam => !resolvedNames.has(normalizeExamName(exam)))
+      .filter(exam => {
+        const n = normalizeExamName(exam);
+        return !n || !ambiguousText.includes(n);
+      });
+
+    const dedupeNamed = list => {
+      const seen = new Set();
+      return list.filter(item => {
+        const key = normalizeExamName(
+          typeof item === "string"
+            ? item
+            : `${item?.name || ""}|${item?.detail || ""}`
+        );
+        if (!key || seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+    };
+
+    return {
+      presentInReportAbsentEumed: dedupeNamed(presentInReportAbsentEumed),
+      eumedNotFound: dedupeNamed(eumedNotFound),
+      ambiguousItems,
+      transferText: buildPrescribedTransferText(extraction,reportText)
+    };
+  }
+
+  // Content script Eumed: interfaccia, automazione Vaadin, file locali e collegamento a Ollama.
+
+
+  function extensionContextIsValid() {
+    try {
+      if (
+        typeof chrome === "undefined" ||
+        !chrome.runtime ||
+        !chrome.runtime.id
+      ) {
+        return false;
+      }
+
+      const testUrl =
+        chrome.runtime.getURL("manifest.json");
+
+      return !!testUrl;
+    } catch {
+      return false;
+    }
+  }
+
+  function makeExtensionContextError(stage = "") {
+    const suffix = stage ? ` (${stage})` : "";
+    const error = new Error(
+      "Il contesto dell'estensione Chrome è stato invalidato" +
+      suffix +
+      ". Ricarica la pagina Eumed (Ctrl+Shift+R) e riseleziona il file. " +
+      "Non è necessario riavviare Ollama."
+    );
+    error.code = "EXTENSION_CONTEXT_INVALIDATED";
+    return error;
+  }
+
+  function assertExtensionContext(stage = "") {
+    if (!extensionContextIsValid()) {
+      throw makeExtensionContextError(stage);
+    }
+  }
+
+  function extensionUrl(path, stage = "") {
+    assertExtensionContext(stage);
+
+    try {
+      return chrome.runtime.getURL(path);
+    } catch (error) {
+      if (isExtensionContextInvalidatedError(error)) {
+        throw makeExtensionContextError(stage);
+      }
+      throw error;
+    }
+  }
+
+  // Evita doppie istanze dopo reload manuale dell'estensione.
+  try {
+    document.getElementById("segretario-mmg-host")?.remove();
+  } catch {}
+
+  // v0.14.3: attese adattive. Invece di pagare sempre una pausa fissa
+  // prima di controllare il DOM Vaadin, verifica subito e poi riprova a
+  // intervalli brevi fino allo stesso timeout massimo usato in precedenza.
+  // Sui PC/pagine veloci si prosegue quasi subito; sulle pagine lente la
+  // tolleranza resta invariata.
+  async function pollUntil(check, timeoutMs, intervalMs = 30) {
+    const startedAt = Date.now();
+
+    while (true) {
+      try {
+        const value = check();
+        if (value) return value;
+      } catch {}
+
+      if (Date.now() - startedAt >= timeoutMs) {
+        return null;
+      }
+
+      await sleep(intervalMs);
+    }
+  }
+
+  function escapeHtml(value) {
+    return String(value ?? "")
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#039;");
+  }
+
+  function sameDateValue(a, b) {
+    const x = normalizeDateValue(a);
+    const y = normalizeDateValue(b);
+    return Boolean(x && y && x === y);
+  }
+
+  function vaadinClick(el) {
+    if (!el) throw new Error("Elemento da cliccare assente.");
+
+    const r = el.getBoundingClientRect();
+    const x = r.left + r.width / 2;
+    const y = r.top + r.height / 2;
+
+    const base = {
+      bubbles: true,
+      cancelable: true,
+      view: window,
+      clientX: x,
+      clientY: y,
+      button: 0
+    };
+
+    el.dispatchEvent(new MouseEvent("mouseover", { ...base, buttons: 0 }));
+    el.dispatchEvent(new MouseEvent("mousemove", { ...base, buttons: 0 }));
+    el.dispatchEvent(new MouseEvent("mousedown", { ...base, buttons: 1 }));
+    el.dispatchEvent(new MouseEvent("mouseup", { ...base, buttons: 0 }));
+    el.dispatchEvent(new MouseEvent("click", { ...base, buttons: 0 }));
+  }
+
+  function getGridRows() {
+    return [
+      ...document.querySelectorAll(
+        ".v-grid-body tr.v-grid-row.v-grid-row-has-data"
+      )
+    ];
+  }
+
+  // Vaadin 8 usa una Grid virtualizzata: il DOM contiene soltanto le righe
+  // visibili e un piccolo buffer. Manteniamo quindi un indice locale di
+  // tutte le prestazioni incontrate durante una scansione verticale.
+  const eumedGridIndex = new Map();
+
+  // v0.13.3:
+  // Vaadin virtualizza la Grid e la stessa prestazione può essere presente
+  // più volte con differenti "Data prescriz.". eumedGridIndex resta l'indice
+  // dei nomi unici; qui conserviamo invece TUTTE le varianti datate viste
+  // durante la scansione.
+  const eumedGridSnapshots = new Map();
+
+  // Data referto da usare per scegliere, tra righe duplicate, la prescrizione
+  // valida più recente con Data prescriz. <= Data referto.
+  const preferredReportDateByExam = new Map();
+
+  let eumedGridScrollContainer = null;
+
+  function findEumedGridScrollContainer() {
+    if (eumedGridScrollContainer && eumedGridScrollContainer.isConnected) return eumedGridScrollContainer;
+    const body = document.querySelector(".v-grid-body");
+    if (!body) return null;
+    const grid = body.closest(".v-grid") || body.parentElement?.closest(".v-grid");
+    const direct = grid?.querySelector(".v-grid-scroller-vertical") || document.querySelector(".v-grid-scroller-vertical");
+    if (direct) {
+      eumedGridScrollContainer = direct;
+      return direct;
+    }
+    let current = body;
+    while (current) {
+      if (Number(current.scrollHeight||0) > Number(current.clientHeight||0) + 4) {
+        eumedGridScrollContainer = current;
+        return current;
+      }
+      current = current.parentElement;
+    }
+    return null;
+  }
+
+  function scoreEumedSnapshot(cells) {
+    const columns = [
+      CONFIG.resultDateColumn,
+      CONFIG.valueColumn,
+      CONFIG.resultColumn,
+      CONFIG.minColumn,
+      CONFIG.maxColumn
+    ].filter(Number.isInteger);
+
+    let empty = 0;
+
+    for (const index of columns) {
+      if (!String(cells[index] || "").trim()) {
+        empty += 1;
+      }
+    }
+
+    return empty;
+  }
+
+  function snapshotPrescriptionDate(snapshot) {
+    return normalizeDateValue(
+      snapshot?.cells?.[
+        CONFIG.prescriptionDateColumn
+      ] || ""
+    );
+  }
+
+  function rowPrescriptionDate(row) {
+    if (!row) return "";
+
+    const cells = [
+      ...row.querySelectorAll("td.v-grid-cell")
+    ];
+
+    return normalizeDateValue(
+      cells[
+        CONFIG.prescriptionDateColumn
+      ]?.textContent?.trim() || ""
+    );
+  }
+
+  function dateToDayNumber(value) {
+    const iso = normalizeDateValue(value);
+    if (!iso) return null;
+
+    const [y, m, d] = iso
+      .split("-")
+      .map(Number);
+
+    return Math.floor(
+      Date.UTC(y, m - 1, d) / 86400000
+    );
+  }
+
+  function setPreferredReportDateForExam(
+    examName,
+    reportDate
+  ) {
+    const iso =
+      normalizeDateValue(reportDate);
+
+    if (!examName || !iso) return;
+
+    const previous =
+      preferredReportDateByExam.get(examName);
+
+    if (previous !== iso) {
+      preferredReportDateByExam.set(
+        examName,
+        iso
+      );
+
+      // La cache riga deve essere rivalutata quando cambia il referto.
+      examRowSelectionCache.delete(examName);
+    }
+  }
+
+  function rememberEumedSnapshot(snapshot) {
+    const name = snapshot?.name;
+    if (!name) return;
+
+    if (!eumedGridSnapshots.has(name)) {
+      eumedGridSnapshots.set(name, []);
+    }
+
+    const list = eumedGridSnapshots.get(name);
+
+    const prescriptionRaw =
+      String(
+        snapshot.cells[
+          CONFIG.prescriptionDateColumn
+        ] || ""
+      ).trim();
+
+    const prescriptionIso =
+      normalizeDateValue(
+        prescriptionRaw
+      );
+
+    // La data di prescrizione è il discriminante principale. Se due righe
+    // hanno la stessa data, per la scrittura sono equivalenti: conserva
+    // quella più vuota / meglio utilizzabile.
+    const existingIndex =
+      list.findIndex(item =>
+        (
+          snapshotPrescriptionDate(item) &&
+          snapshotPrescriptionDate(item) === prescriptionIso
+        ) ||
+        (
+          !prescriptionIso &&
+          String(
+            item.cells[
+              CONFIG.prescriptionDateColumn
+            ] || ""
+          ).trim() === prescriptionRaw
+        )
+      );
+
+    if (existingIndex < 0) {
+      list.push(snapshot);
+      return;
+    }
+
+    if (
+      snapshot.score >
+      Number(list[existingIndex]?.score || 0)
+    ) {
+      list[existingIndex] = snapshot;
+    }
+  }
+
+  function chooseSnapshotForReportDate(
+    examName,
+    reportDate = ""
+  ) {
+    const list =
+      eumedGridSnapshots.get(examName) ||
+      [];
+
+    if (!list.length) {
+      return eumedGridIndex.get(examName) || null;
+    }
+
+    const reportIso =
+      normalizeDateValue(
+        reportDate ||
+        preferredReportDateByExam.get(examName) ||
+        ""
+      );
+
+    // Se non abbiamo ancora una data referto (fase di lettura/analisi),
+    // manteniamo il comportamento storico: riga più vuota.
+    if (!reportIso) {
+      return [...list]
+        .sort((a, b) =>
+          Number(b.score || 0) -
+          Number(a.score || 0)
+        )[0] || null;
+    }
+
+    const reportDay =
+      dateToDayNumber(reportIso);
+
+    const dated = list
+      .map(snapshot => ({
+        snapshot,
+        prescriptionIso:
+          snapshotPrescriptionDate(snapshot),
+        day:
+          dateToDayNumber(
+            snapshotPrescriptionDate(snapshot)
+          )
+      }))
+      .filter(item =>
+        item.prescriptionIso &&
+        Number.isFinite(item.day)
+      );
+
+    const validPrior = dated
+      .filter(item =>
+        item.day <= reportDay
+      )
+      .sort((a, b) =>
+        // Più vicina al referto = data prescrizione più recente.
+        b.day - a.day ||
+        Number(b.snapshot.score || 0) -
+        Number(a.snapshot.score || 0)
+      );
+
+    if (validPrior.length) {
+      return validPrior[0].snapshot;
+    }
+
+    // Se c'è una sola riga, non cambiamo il comportamento storico.
+    // Il vincolo forte viene applicato alle duplicazioni reali.
+    if (list.length === 1) {
+      return list[0];
+    }
+
+    // Più righe ma nessuna prescrizione precedente/uguale al referto:
+    // NON scegliere automaticamente una prescrizione futura.
+    return null;
+  }
+
+  function getDuplicateExamCount(examName) {
+    return (
+      eumedGridSnapshots.get(examName)?.length ||
+      0
+    );
+  }
+
+  function captureVisibleEumedRows() {
+    const container =
+      findEumedGridScrollContainer();
+
+    const scrollTop =
+      Number(container?.scrollTop || 0);
+
+    for (const row of getGridRows()) {
+      const cells = [
+        ...row.querySelectorAll("td.v-grid-cell")
+      ].map(cell => cell.textContent.trim());
+
+      const name =
+        cells[CONFIG.examNameColumn]?.trim();
+
+      if (!name) continue;
+
+      const snapshot = {
+        name,
+        cells,
+        scrollTop,
+        score: scoreEumedSnapshot(cells)
+      };
+
+      rememberEumedSnapshot(snapshot);
+
+      const previous =
+        eumedGridIndex.get(name);
+
+      // L'indice principale continua a rappresentare una riga generica
+      // utilizzabile per discovery/target. Le duplicazioni reali vengono
+      // gestite da eumedGridSnapshots al momento della scrittura.
+      if (
+        !previous ||
+        snapshot.score > previous.score
+      ) {
+        eumedGridIndex.set(name, snapshot);
+      }
+    }
+  }
+
+  async function scanAllEumedRows(
+    onProgress = null,
+    { clear = true } = {}
+  ) {
+    if (clear) {
+      eumedGridIndex.clear();
+      eumedGridSnapshots.clear();
+      examRowSelectionCache.clear();
+    }
+
+    captureVisibleEumedRows();
+
+    const container =
+      findEumedGridScrollContainer();
+
+    if (!container) {
+      return {
+        count: eumedGridIndex.size,
+        virtualized: false
+      };
+    }
+
+    const originalTop =
+      Number(container.scrollTop || 0);
+
+    const maxScroll = Math.max(
+      0,
+      container.scrollHeight -
+        container.clientHeight
+    );
+
+    const step = Math.max(
+      140,
+      Math.floor(
+        Number(container.clientHeight || 300) * 0.72
+      )
+    );
+
+    const positions = [0];
+
+    for (
+      let pos = step;
+      pos < maxScroll;
+      pos += step
+    ) {
+      positions.push(pos);
+    }
+
+    if (
+      maxScroll > 0 &&
+      positions[positions.length - 1] !== maxScroll
+    ) {
+      positions.push(maxScroll);
+    }
+
+    for (let i = 0; i < positions.length; i++) {
+      container.scrollTop = positions[i];
+      container.dispatchEvent(
+        new Event("scroll", { bubbles: true })
+      );
+
+      await sleep(260);
+      captureVisibleEumedRows();
+
+      onProgress?.({
+        current: i + 1,
+        total: positions.length,
+        count: eumedGridIndex.size
+      });
+    }
+
+    container.scrollTop =
+      Math.min(
+        originalTop,
+        Math.max(
+          0,
+          container.scrollHeight -
+            container.clientHeight
+        )
+      );
+
+    container.dispatchEvent(
+      new Event("scroll", { bubbles: true })
+    );
+
+    await sleep(180);
+    captureVisibleEumedRows();
+
+    return {
+      count: eumedGridIndex.size,
+      virtualized: positions.length > 1
+    };
+  }
+
+  async function ensureExamRowVisible(
+    examName,
+    attempts = 2,
+    reportDate = ""
+  ) {
+    const reportIso =
+      normalizeDateValue(
+        reportDate ||
+        preferredReportDateByExam.get(examName) ||
+        ""
+      );
+
+    let row =
+      getPreferredExamRow(
+        examName,
+        reportIso
+      );
+
+    if (row) return row;
+
+    const container =
+      findEumedGridScrollContainer();
+
+    if (!container) return null;
+
+    const snapshot =
+      chooseSnapshotForReportDate(
+        examName,
+        reportIso
+      );
+
+    // Se è un duplicato e non esiste alcuna prescrizione valida precedente
+    // al referto, non cercare/forzare una riga futura.
+    if (
+      reportIso &&
+      getDuplicateExamCount(examName) > 1 &&
+      !snapshot
+    ) {
+      return null;
+    }
+
+    if (snapshot) {
+      container.scrollTop =
+        Number(snapshot.scrollTop || 0);
+
+      container.dispatchEvent(
+        new Event("scroll", { bubbles: true })
+      );
+
+      row = await pollUntil(() => {
+        captureVisibleEumedRows();
+        return getPreferredExamRow(
+          examName,
+          reportIso
+        );
+      }, 220, 25);
+
+      if (row) return row;
+    }
+
+    // Fallback mirato: riscorri la Grid finché compare la riga corretta
+    // (nome + Data prescriz. quando il referto la rende discriminante).
+    for (
+      let attempt = 0;
+      attempt < attempts;
+      attempt++
+    ) {
+      const maxScroll = Math.max(
+        0,
+        container.scrollHeight -
+          container.clientHeight
+      );
+
+      const step = Math.max(
+        140,
+        Math.floor(
+          Number(container.clientHeight || 300) *
+          0.72
+        )
+      );
+
+      for (
+        let pos = 0;
+        pos <= maxScroll;
+        pos += step
+      ) {
+        container.scrollTop =
+          Math.min(pos, maxScroll);
+
+        container.dispatchEvent(
+          new Event("scroll", { bubbles: true })
+        );
+
+        row = await pollUntil(() => {
+          captureVisibleEumedRows();
+          return getPreferredExamRow(
+            examName,
+            reportIso
+          );
+        }, 150, 25);
+
+        if (row) return row;
+      }
+
+      if (maxScroll > 0) {
+        container.scrollTop = maxScroll;
+
+        container.dispatchEvent(
+          new Event("scroll", { bubbles: true })
+        );
+
+        row = await pollUntil(() => {
+          captureVisibleEumedRows();
+          return getPreferredExamRow(
+            examName,
+            reportIso
+          );
+        }, 170, 25);
+
+        if (row) return row;
+      }
+    }
+
+    return null;
+  }
+
+  function getAvailableExams() {
+    captureVisibleEumedRows();
+
+    return [
+      ...eumedGridIndex.keys()
+    ];
+  }
+
+  function getCachedExamCells(examName) {
+    const visible =
+      findExamRows(examName)[0] || null;
+
+    if (visible) {
+      return [
+        ...visible.querySelectorAll("td.v-grid-cell")
+      ].map(cell => cell.textContent.trim());
+    }
+
+    return (
+      eumedGridIndex.get(examName)?.cells ||
+      null
+    );
+  }
+
+  function isEumedExamEmpty(examName) {
+    const cells =
+      getCachedExamCells(examName);
+
+    if (!cells) return false;
+
+    const value =
+      cells[CONFIG.valueColumn]?.trim() || "";
+
+    const result =
+      cells[CONFIG.resultColumn]?.trim() || "";
+
+    if (getLongReportKind(examName)) {
+      return (
+        normalizeExamName(result) !== "VEDI REFERTO"
+      );
+    }
+
+    return !value && !result;
+  }
+
+  function getEmptyEumedExams() {
+    return getAvailableExams()
+      .filter(isEumedExamEmpty);
+  }
+
+  function findExamRows(examName) {
+    return getGridRows().filter(row => {
+      const cells = [...row.querySelectorAll("td.v-grid-cell")];
+
+      return cells.some(cell => cell.textContent.trim() === examName);
+    });
+  }
+
+  // Se la stessa prestazione compare più volte nella Grid:
+  // - scegli una Data prescriz. <= Data referto;
+  // - se sono più di una, usa la più vicina al referto;
+  // - a parità di data, preferisci la riga più vuota.
+  const examRowSelectionCache = new Map();
+
+  function scoreExamRowForSelection(row) {
+    const cells = [...row.querySelectorAll("td.v-grid-cell")];
+
+    const interestingColumns = [
+      CONFIG.resultDateColumn,
+      CONFIG.valueColumn,
+      CONFIG.resultColumn,
+      CONFIG.minColumn,
+      CONFIG.maxColumn
+    ].filter(index => Number.isInteger(index));
+
+    let emptyCount = 0;
+
+    for (const index of interestingColumns) {
+      const value = cells[index]?.textContent?.trim() || "";
+      if (!value) emptyCount += 1;
+    }
+
+    let score = emptyCount * 10;
+
+    try {
+      if (isVisibleElement(row)) score += 3;
+    } catch {}
+
+    return score;
+  }
+
+  function getPreferredExamRow(
+    examName,
+    reportDate = ""
+  ) {
+    captureVisibleEumedRows();
+
+    const rows = findExamRows(examName);
+    if (!rows.length) return null;
+
+    const reportIso =
+      normalizeDateValue(
+        reportDate ||
+        preferredReportDateByExam.get(examName) ||
+        ""
+      );
+
+    const targetSnapshot =
+      chooseSnapshotForReportDate(
+        examName,
+        reportIso
+      );
+
+    const desiredPrescriptionDate =
+      snapshotPrescriptionDate(
+        targetSnapshot
+      );
+
+    const selectionKey =
+      `${reportIso}|${desiredPrescriptionDate}`;
+
+    const cached =
+      examRowSelectionCache.get(examName);
+
+    if (
+      cached?.row &&
+      cached.row.isConnected &&
+      rows.includes(cached.row) &&
+      cached.selectionKey === selectionKey
+    ) {
+      return cached.row;
+    }
+
+    let candidates = [...rows];
+
+    if (
+      desiredPrescriptionDate
+    ) {
+      const exact = candidates.filter(
+        row =>
+          rowPrescriptionDate(row) ===
+          desiredPrescriptionDate
+      );
+
+      if (exact.length) {
+        candidates = exact;
+      } else if (
+        getDuplicateExamCount(examName) > 1
+      ) {
+        // La riga giusta non è nel viewport corrente.
+        return null;
+      }
+    } else if (
+      reportIso &&
+      getDuplicateExamCount(examName) > 1
+    ) {
+      console.warn(
+        `Segretario MMG: "${examName}" presente in più righe, ` +
+        `ma nessuna Data prescriz. è <= Data referto ${formatDateForGrid(reportIso)}. ` +
+        "Inserimento automatico non eseguito su una prescrizione futura."
+      );
+      return null;
+    }
+
+    const selected =
+      candidates
+        .map((row, index) => ({
+          row,
+          index,
+          score:
+            scoreExamRowForSelection(row)
+        }))
+        .sort((a, b) =>
+          b.score - a.score ||
+          a.index - b.index
+        )[0]?.row || null;
+
+    if (!selected) return null;
+
+    if (
+      getDuplicateExamCount(examName) > 1
+    ) {
+      const chosenPrescription =
+        rowPrescriptionDate(selected);
+
+      log(
+        `Prestazione duplicata in Eumed: "${examName}" ` +
+        `(${getDuplicateExamCount(examName)} date). ` +
+        `Referto ${formatDateForGrid(reportIso)} -> ` +
+        `prescrizione ${formatDateForGrid(chosenPrescription)}.`
+      );
+    }
+
+    examRowSelectionCache.set(
+      examName,
+      {
+        row: selected,
+        selectionKey
+      }
+    );
+
+    return selected;
+  }
+
+  function readExamRow(examName) {
+    const row = getPreferredExamRow(examName);
+    if (!row) return null;
+
+    return [...row.querySelectorAll("td.v-grid-cell")]
+      .map(cell => cell.textContent.trim());
+  }
+
+  async function loadLabCatalogData() {
+    const response = await fetch(
+      extensionUrl("lab_catalog.json", "catalogo locale")
+    );
+    if (!response.ok) {
+      throw new Error(`Catalogo laboratorio HTTP ${response.status}`);
+    }
+    return response.json();
+  }
+
+  function typeVaadinChar(input, char) {
+    input.dispatchEvent(new KeyboardEvent("keydown", {
+      key: char,
+      bubbles: true,
+      cancelable: true
+    }));
+
+    input.dispatchEvent(new KeyboardEvent("keypress", {
+      key: char,
+      bubbles: true,
+      cancelable: true
+    }));
+
+    input.dispatchEvent(new InputEvent("beforeinput", {
+      inputType: "insertText",
+      data: char,
+      bubbles: true,
+      cancelable: true
+    }));
+
+    document.execCommand("insertText", false, char);
+
+    input.dispatchEvent(new KeyboardEvent("keyup", {
+      key: char,
+      bubbles: true
+    }));
+  }
+
+  function dispatchVaadinKey(input, type, key, code, keyCode) {
+    const event = new KeyboardEvent(type, {
+      key,
+      code,
+      bubbles: true,
+      cancelable: true
+    });
+
+    // GWT/Vaadin 8 può leggere keyCode/which invece di key.
+    for (const prop of ["keyCode", "which"]) {
+      try {
+        Object.defineProperty(event, prop, {
+          configurable: true,
+          get: () => keyCode
+        });
+      } catch {}
+    }
+
+    input.dispatchEvent(event);
+  }
+
+  function vaadinDoubleClick(el) {
+    if (!el) return;
+    vaadinClick(el);
+    vaadinClick(el);
+    const r = el.getBoundingClientRect();
+    el.dispatchEvent(new MouseEvent("dblclick", {
+      bubbles: true, cancelable: true, view: window,
+      clientX: r.left + r.width/2,
+      clientY: r.top + r.height/2,
+      button: 0, detail: 2
+    }));
+  }
+
+  async function openGridEditorForExam(examName, preferredColumn, mode = "numeric") {
+    await ensureExamRowVisible(examName);
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const row = getPreferredExamRow(examName);
+      if (!row) return null;
+      const cells = [...row.querySelectorAll("td.v-grid-cell")];
+      const preferred = cells[preferredColumn] || cells[CONFIG.examNameColumn];
+      const examCell = cells[CONFIG.examNameColumn];
+      const target = attempt < 2 ? preferred : examCell;
+      if (!target) return null;
+      if (attempt % 2 === 0) vaadinClick(target); else vaadinDoubleClick(target);
+      if (mode === "result") {
+        const filter = await waitForWritableResultFilter();
+        if (filter) return { row: getPreferredExamRow(examName) || row, filter };
+      } else {
+        // In condizioni normali l'editor compare quasi subito. Il polling
+        // parte immediatamente e conserva i retry storici se non compare.
+        const fields = await waitForNumericEditor(900);
+        if (fields) return { row: getPreferredExamRow(examName) || row, fields };
+      }
+      await sleep(40);
+    }
+    return null;
+  }
+
+  async function waitForNumericEditor(timeoutMs = CONFIG.editorWaitMs) {
+    return await pollUntil(() => {
+      const fields = [
+        ...document.querySelectorAll(
+          ".v-customcomponent.numeric-field input.v-textfield"
+        )
+      ].filter(el => {
+        const r = el.getBoundingClientRect();
+
+        return (
+          r.width > 0 &&
+          r.height > 0 &&
+          getComputedStyle(el).visibility !== "hidden"
+        );
+      });
+
+      return fields.length === 3 ? fields : null;
+    }, timeoutMs, 30);
+  }
+
+  async function setExamField(examName, fieldIndex, gridColumn, value, fieldLabel) {
+    if (value === null || value === undefined || String(value).trim() === "") {
+      return true;
+    }
+
+    value = String(value).trim();
+
+    const opened = await openGridEditorForExam(examName, gridColumn, "numeric");
+
+    if (!opened?.fields) {
+      console.error(`Segretario MMG: ${fieldLabel} "${examName}": editor numerico Vaadin non aperto.`);
+      return false;
+    }
+
+    const fields = opened.fields;
+    const input = fields[fieldIndex];
+
+    if (!input) {
+      console.error(`Segretario MMG: campo ${fieldLabel} non trovato.`);
+      return false;
+    }
+
+    vaadinClick(input);
+    await sleep(80);
+
+    input.select();
+    await sleep(40);
+
+    for (const char of value) {
+      typeVaadinChar(input, char);
+    }
+
+    await sleep(80);
+
+    if (!sameNumericValue(input.value, value)) {
+      console.error(
+        `Segretario MMG: STOP ${fieldLabel}, input="${input.value}", atteso="${value}".`
+      );
+      return false;
+    }
+
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+
+    input.dispatchEvent(new FocusEvent("focusout", {
+      bubbles: true,
+      relatedTarget: document.body
+    }));
+
+    input.blur();
+
+    await sleep(CONFIG.commitWaitMs);
+
+    const cells = readExamRow(examName);
+    if (!cells) return false;
+
+    const gridValue = cells[gridColumn];
+
+    if (!sameNumericValue(gridValue, value)) {
+      console.error(
+        `Segretario MMG: STOP ${fieldLabel}, Grid="${gridValue}", atteso="${value}".`
+      );
+      return false;
+    }
+
+    log(`${fieldLabel} verificato`, examName, gridValue);
+    return true;
+  }
+
+  function isUsableDateInput(el) {
+    if (!el || el.tagName !== "INPUT") return false;
+
+    const r = el.getBoundingClientRect();
+    if (!(r.width > 0 && r.height > 0)) return false;
+
+    const style = getComputedStyle(el);
+    if (
+      style.visibility === "hidden" ||
+      style.display === "none" ||
+      el.disabled ||
+      el.readOnly
+    ) {
+      return false;
+    }
+
+    // Escludi gli editor che sappiamo non essere la data.
+    if (el.classList.contains("v-filterselect-input")) return false;
+
+    if (
+      el.closest(".numeric-field") ||
+      el.closest(".v-customcomponent.numeric-field")
+    ) {
+      return false;
+    }
+
+    return true;
+  }
+
+  function scoreDateInputForCell(input, dateCell) {
+    const ir = input.getBoundingClientRect();
+    const cr = dateCell.getBoundingClientRect();
+
+    const ix = ir.left + ir.width / 2;
+    const iy = ir.top + ir.height / 2;
+    const cx = cr.left + cr.width / 2;
+    const cy = cr.top + cr.height / 2;
+
+    let score = 0;
+
+    const classText = String(input.className || "");
+    const parentClass = String(input.parentElement?.className || "");
+
+    if (/datefield/i.test(classText)) score += 300;
+    if (/datefield/i.test(parentClass)) score += 220;
+    if (input.closest(".v-datefield")) score += 300;
+
+    // Sovrapposizione verticale con la riga e vicinanza alla colonna Data esito.
+    const verticalOverlap =
+      Math.max(0, Math.min(ir.bottom, cr.bottom) - Math.max(ir.top, cr.top));
+
+    const horizontalOverlap =
+      Math.max(0, Math.min(ir.right, cr.right) - Math.max(ir.left, cr.left));
+
+    if (verticalOverlap > 0) score += 120;
+    if (horizontalOverlap > 0) score += 180;
+
+    const distance =
+      Math.sqrt((ix - cx) ** 2 + (iy - cy) ** 2);
+
+    score -= Math.min(distance, 1000) / 5;
+
+    if (
+      /\d{1,2}[\/.\-]\d{1,2}[\/.\-]\d{2,4}/.test(
+        String(input.value || "")
+      )
+    ) {
+      score += 80;
+    }
+
+    return score;
+  }
+
+  async function waitForDateInput(dateCell, timeoutMs = CONFIG.editorWaitMs) {
+    return await pollUntil(() => {
+      // Se il click sulla cella ha portato direttamente il focus
+      // sull'input della data, questa è la fonte più affidabile.
+      const active = document.activeElement;
+
+      if (isUsableDateInput(active)) {
+        const activeScore =
+          scoreDateInputForCell(active, dateCell);
+
+        if (activeScore > 80) {
+          return active;
+        }
+      }
+
+      // Vaadin 8 DateField standard.
+      const direct = [
+        ...document.querySelectorAll(
+          ".v-datefield input, " +
+          "input.v-datefield-textfield, " +
+          "input[class*='datefield']"
+        )
+      ].filter(isUsableDateInput);
+
+      if (direct.length) {
+        direct.sort(
+          (a, b) =>
+            scoreDateInputForCell(b, dateCell) -
+            scoreDateInputForCell(a, dateCell)
+        );
+
+        return direct[0];
+      }
+
+      // Fallback: input testuale visibile realmente sovrapposto alla cella.
+      const allInputs = [
+        ...document.querySelectorAll("input")
+      ].filter(isUsableDateInput);
+
+      const scored = allInputs
+        .map(el => ({
+          el,
+          score: scoreDateInputForCell(el, dateCell)
+        }))
+        .sort((a, b) => b.score - a.score);
+
+      return scored[0]?.score > 100
+        ? scored[0].el
+        : null;
+    }, timeoutMs, 30);
+  }
+
+  function logDateEditorDiagnostics(dateCell) {
+    try {
+      const cr = dateCell?.getBoundingClientRect();
+
+      const inputs = [
+        ...document.querySelectorAll("input")
+      ]
+        .filter(el => {
+          const r = el.getBoundingClientRect();
+          return r.width > 0 && r.height > 0;
+        })
+        .map(el => ({
+          class: String(el.className || ""),
+          value: el.value || "",
+          readonly: !!el.readOnly,
+          disabled: !!el.disabled,
+          rect: {
+            left: Math.round(el.getBoundingClientRect().left),
+            top: Math.round(el.getBoundingClientRect().top),
+            width: Math.round(el.getBoundingClientRect().width),
+            height: Math.round(el.getBoundingClientRect().height)
+          },
+          html: el.outerHTML.slice(0, 1200)
+        }));
+
+      const dateButtons = [
+        ...document.querySelectorAll(".v-datefield-button")
+      ]
+        .filter(el => {
+          const r = el.getBoundingClientRect();
+          return r.width > 0 && r.height > 0;
+        })
+        .map(el => el.parentElement?.outerHTML?.slice(0, 2500) || el.outerHTML);
+
+      console.error(
+        "Segretario MMG: diagnostica DateField",
+        {
+          dateCell: cr ? {
+            left: Math.round(cr.left),
+            top: Math.round(cr.top),
+            width: Math.round(cr.width),
+            height: Math.round(cr.height)
+          } : null,
+          activeElement: document.activeElement?.outerHTML?.slice(0, 1500) || "",
+          visibleInputs: inputs,
+          visibleDateFields: dateButtons
+        }
+      );
+    } catch {}
+  }
+
+  function selectWholeVaadinInput(input) {
+    if (!input) return;
+
+    try { input.focus(); } catch {}
+
+    try {
+      input.select();
+    } catch {}
+
+    try {
+      input.setSelectionRange(
+        0,
+        String(input.value || "").length
+      );
+    } catch {}
+
+    // Evento legacy utile a GWT; la selezione vera viene comunque
+    // applicata tramite select()/setSelectionRange().
+    try {
+      input.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "a",
+          code: "KeyA",
+          ctrlKey: true,
+          bubbles: true,
+          cancelable: true
+        })
+      );
+      input.dispatchEvent(
+        new KeyboardEvent("keyup", {
+          key: "a",
+          code: "KeyA",
+          ctrlKey: true,
+          bubbles: true,
+          cancelable: true
+        })
+      );
+    } catch {}
+  }
+
+  function setNativeInputValue(input, value) {
+    try {
+      const proto =
+        typeof HTMLTextAreaElement !== "undefined" && input instanceof HTMLTextAreaElement
+          ? HTMLTextAreaElement.prototype
+          : HTMLInputElement.prototype;
+
+      const setter =
+        Object.getOwnPropertyDescriptor(
+          proto,
+          "value"
+        )?.set;
+
+      if (setter) {
+        setter.call(input, value);
+      } else {
+        input.value = value;
+      }
+
+      input.dispatchEvent(
+        new InputEvent("input", {
+          bubbles: true,
+          cancelable: false,
+          inputType: "insertReplacementText",
+          data: value
+        })
+      );
+
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async function replaceVaadinDateInputFast(
+    input,
+    target,
+    isoDate
+  ) {
+    vaadinClick(input);
+    await sleep(35);
+
+    // FAST PATH: sostituisce l'intera data in un'unica operazione.
+    selectWholeVaadinInput(input);
+    await sleep(20);
+
+    try {
+      document.execCommand(
+        "insertText",
+        false,
+        target
+      );
+    } catch {}
+
+    await sleep(35);
+
+    if (sameDateValue(input.value, isoDate)) {
+      return true;
+    }
+
+    // Secondo fast path: setter nativo + evento input.
+    selectWholeVaadinInput(input);
+    setNativeInputValue(input, target);
+    await sleep(35);
+
+    if (sameDateValue(input.value, isoDate)) {
+      return true;
+    }
+
+    // Fallback legacy: pulizia e digitazione carattere per carattere,
+    // conservata per le build Vaadin/GWT che ignorano insertText.
+    selectWholeVaadinInput(input);
+
+    try {
+      document.execCommand("delete", false);
+    } catch {}
+
+    if (String(input.value || "").trim()) {
+      try {
+        const setter =
+          Object.getOwnPropertyDescriptor(
+            HTMLInputElement.prototype,
+            "value"
+          )?.set;
+
+        setter?.call(input, "");
+        input.dispatchEvent(
+          new InputEvent("input", {
+            bubbles: true,
+            inputType: "deleteContentBackward"
+          })
+        );
+      } catch {}
+    }
+
+    for (const char of target) {
+      typeVaadinChar(input, char);
+    }
+
+    await sleep(55);
+
+    return sameDateValue(
+      input.value,
+      isoDate
+    );
+  }
+
+  async function setExamDate(examName, reportDate) {
+    const isoDate = normalizeDateValue(reportDate);
+    if (!isoDate) return true;
+
+    setPreferredReportDateForExam(
+      examName,
+      isoDate
+    );
+
+    const visibleRow =
+      await ensureExamRowVisible(
+        examName,
+        2,
+        isoDate
+      );
+
+    if (!visibleRow) {
+      console.error(
+        `Segretario MMG: Data referto "${examName}": nessuna riga Eumed compatibile con Data prescriz. <= ${formatDateForGrid(isoDate)}.`
+      );
+      return false;
+    }
+
+    const target = formatDateForGrid(isoDate);
+    const current = readExamRow(examName)?.[CONFIG.resultDateColumn] || "";
+
+    if (sameDateValue(current, isoDate)) {
+      log("Data già corretta", examName, current);
+      return true;
+    }
+
+    const row = getPreferredExamRow(examName);
+
+    if (!row) {
+      console.error(
+        `Segretario MMG: Data referto "${examName}": nessuna riga trovata.`
+      );
+      return false;
+    }
+    const cells = [...row.querySelectorAll("td.v-grid-cell")];
+
+    const dateCell = cells[CONFIG.resultDateColumn];
+
+    if (!dateCell) {
+      console.error(
+        `Segretario MMG: STOP, cella Data esito non trovata per "${examName}".`
+      );
+      return false;
+    }
+
+    // Apri l'editor direttamente sulla colonna Data esito.
+    // È più affidabile che aprire la riga cliccando sul nome esame.
+    vaadinClick(dateCell);
+
+    let input = await waitForDateInput(dateCell, 650);
+
+    // Alcune build Vaadin richiedono un secondo click sulla cella già
+    // focalizzata prima di materializzare l'editor. Manteniamo il fallback
+    // ma senza pagare 120 ms fissi quando il primo click è sufficiente.
+    if (!input) {
+      vaadinClick(dateCell);
+      input = await waitForDateInput(dateCell, CONFIG.editorWaitMs);
+    }
+
+    if (!input) {
+      logDateEditorDiagnostics(dateCell);
+
+      console.error(
+        "Segretario MMG: STOP, campo Data esito non individuato nell'editor."
+      );
+      return false;
+    }
+
+    const replaced =
+      await replaceVaadinDateInputFast(
+        input,
+        target,
+        isoDate
+      );
+
+    if (!replaced) {
+      console.error(
+        `Segretario MMG: STOP Data referto, input="${input.value}", atteso="${target}".`
+      );
+      return false;
+    }
+
+    // Vaadin 8 DateField non sempre committa con il solo blur.
+    // Enter forza il parsing/commit del valore digitato nel widget GWT.
+    dispatchVaadinKey(input, "keydown", "Enter", "Enter", 13);
+    dispatchVaadinKey(input, "keypress", "Enter", "Enter", 13);
+    dispatchVaadinKey(input, "keyup", "Enter", "Enter", 13);
+
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    input.dispatchEvent(new FocusEvent("focusout", {
+      bubbles: true,
+      relatedTarget: document.body
+    }));
+    input.blur();
+
+    // Forza anche l'uscita dall'editor della riga, come per il FilterSelect.
+    const commitCell =
+      cells[CONFIG.prescriptionDateColumn ?? 1] ||
+      cells[CONFIG.examNameColumn];
+
+    if (commitCell) {
+      vaadinClick(commitCell);
+    }
+
+    const verifyTimeoutMs =
+      Math.max(
+        CONFIG.commitWaitMs,
+        1400
+      );
+
+    const startedAt = Date.now();
+    let gridDate =
+      readExamRow(examName)?.[CONFIG.resultDateColumn] || "";
+
+    while (
+      !sameDateValue(gridDate, isoDate) &&
+      Date.now() - startedAt < verifyTimeoutMs
+    ) {
+      await sleep(35);
+      gridDate =
+        readExamRow(examName)?.[CONFIG.resultDateColumn] || "";
+    }
+
+    if (!sameDateValue(gridDate, isoDate)) {
+      console.error(
+        `Segretario MMG: STOP Data referto dopo commit, Grid="${gridDate}", atteso="${target}".`
+      );
+      return false;
+    }
+
+    log("Data referto verificata", examName, gridDate);
+    return true;
+  }
+
+  async function resetGridEditorForFieldRetry(examName) {
+    try {
+      const row = getPreferredExamRow(examName);
+      if (!row) return;
+
+      const cells = [...row.querySelectorAll("td.v-grid-cell")];
+      const resetCell =
+        cells[CONFIG.examNameColumn] ||
+        cells[CONFIG.prescriptionDateColumn ?? 1];
+
+      if (resetCell) {
+        vaadinClick(resetCell);
+        await sleep(180);
+      }
+
+      const target = document.activeElement || document.body;
+      dispatchVaadinKey(target, "keydown", "Escape", "Escape", 27);
+      dispatchVaadinKey(target, "keyup", "Escape", "Escape", 27);
+      await sleep(100);
+    } catch {}
+  }
+
+  async function setExamFieldResilient(
+    examName,
+    fieldIndex,
+    gridColumn,
+    value,
+    label,
+    attempts = 3
+  ) {
+    if (value === null || value === undefined || String(value).trim() === "") {
+      return {
+        requested: false,
+        verified: true,
+        label,
+        expected: "",
+        current: ""
+      };
+    }
+
+    const expected = String(value).trim();
+
+    const already =
+      readExamRow(examName)?.[gridColumn]?.trim() || "";
+
+    if (sameNumericValue(already, expected)) {
+      return {
+        requested: true,
+        verified: true,
+        label,
+        expected,
+        current: already
+      };
+    }
+
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      if (attempt > 1) {
+        await resetGridEditorForFieldRetry(examName);
+      }
+
+      const ok = await setExamField(
+        examName,
+        fieldIndex,
+        gridColumn,
+        expected,
+        label
+      );
+
+      if (ok) {
+        const current =
+          readExamRow(examName)?.[gridColumn]?.trim() || "";
+
+        return {
+          requested: true,
+          verified: true,
+          label,
+          expected,
+          current
+        };
+      }
+
+      // Vaadin può aggiornare la cella leggermente dopo il timeout interno.
+      for (let i = 0; i < 6; i++) {
+        await sleep(150);
+
+        const current =
+          readExamRow(examName)?.[gridColumn]?.trim() || "";
+
+        if (sameNumericValue(current, expected)) {
+          log(
+            `${label} confermato in ritardo`,
+            examName,
+            current
+          );
+
+          return {
+            requested: true,
+            verified: true,
+            label,
+            expected,
+            current
+          };
+        }
+      }
+    }
+
+    const current =
+      readExamRow(examName)?.[gridColumn]?.trim() || "";
+
+    console.warn(
+      `Segretario MMG: ${label} non verificato per "${examName}". ` +
+      `Grid="${current}", atteso="${expected}". La compilazione prosegue.`
+    );
+
+    return {
+      requested: true,
+      verified: false,
+      label,
+      expected,
+      current
+    };
+  }
+
+  async function setExamRecord(item) {
+    if (item.reportDate) {
+      setPreferredReportDateForExam(
+        item.exam,
+        item.reportDate
+      );
+    }
+
+    await ensureExamRowVisible(
+      item.exam,
+      2,
+      item.reportDate || ""
+    );
+
+    // v0.14.1:
+    // FAST PATH: apre UNA sola volta l'editor numerico Vaadin e compila
+    // Min / Max / Valore nello stesso editor. Dopo un unico commit verifica
+    // tutte le celle. Solo i campi non confermati ricadono nel vecchio
+    // percorso resiliente, mantenendo quindi le stesse garanzie di sicurezza.
+    const defs = [
+      {
+        key: "min",
+        label: "Min",
+        fieldIndex: 1,
+        gridColumn: CONFIG.minColumn,
+        value: item.refMin
+      },
+      {
+        key: "max",
+        label: "Max",
+        fieldIndex: 2,
+        gridColumn: CONFIG.maxColumn,
+        value: item.refMax
+      },
+      {
+        key: "value",
+        label: "Valore",
+        fieldIndex: 0,
+        gridColumn: CONFIG.valueColumn,
+        value: item.value
+      }
+    ];
+
+    const fieldResults = {
+      min: null,
+      max: null,
+      value: null
+    };
+
+    const pending = [];
+
+    for (const def of defs) {
+      const expected =
+        def.value === null || def.value === undefined
+          ? ""
+          : String(def.value).trim();
+
+      if (!expected) {
+        fieldResults[def.key] = {
+          requested: false,
+          verified: true,
+          label: def.label,
+          expected: "",
+          current: ""
+        };
+        continue;
+      }
+
+      const current =
+        readExamRow(item.exam)?.[def.gridColumn]?.trim() || "";
+
+      if (sameNumericValue(current, expected)) {
+        fieldResults[def.key] = {
+          requested: true,
+          verified: true,
+          label: def.label,
+          expected,
+          current
+        };
+        continue;
+      }
+
+      pending.push({
+        ...def,
+        expected
+      });
+    }
+
+    if (pending.length) {
+      const preferredColumn =
+        pending.find(x => x.key === "value")?.gridColumn ||
+        pending[0].gridColumn;
+
+      const opened =
+        await openGridEditorForExam(
+          item.exam,
+          preferredColumn,
+          "numeric"
+        );
+
+      if (opened?.fields) {
+        for (const def of pending) {
+          const input =
+            opened.fields[def.fieldIndex];
+
+          if (!input) continue;
+
+          vaadinClick(input);
+          await sleep(25);
+
+          selectWholeVaadinInput(input);
+          await sleep(15);
+
+          // Manteniamo la digitazione legacy che sappiamo essere accettata
+          // da GWT/Vaadin; il guadagno deriva dall'aprire/committare la riga
+          // una sola volta, non dal forzare setter DOM più aggressivi.
+          for (const char of def.expected) {
+            typeVaadinChar(input, char);
+          }
+
+          await sleep(30);
+
+          if (sameNumericValue(input.value, def.expected)) {
+            input.dispatchEvent(
+              new Event("change", { bubbles: true })
+            );
+          }
+        }
+
+        // Un solo commit dell'intera riga.
+        const row =
+          getPreferredExamRow(item.exam) ||
+          opened.row;
+
+        const cells =
+          row
+            ? [...row.querySelectorAll("td.v-grid-cell")]
+            : [];
+
+        const commitCell =
+          cells[CONFIG.examNameColumn] ||
+          cells[CONFIG.prescriptionDateColumn ?? 1];
+
+        if (commitCell) {
+          vaadinClick(commitCell);
+        } else {
+          const active =
+            document.activeElement;
+
+          try {
+            active?.dispatchEvent(
+              new FocusEvent("focusout", {
+                bubbles: true,
+                relatedTarget: document.body
+              })
+            );
+            active?.blur?.();
+          } catch {}
+        }
+
+        const verifyTimeoutMs =
+          Math.max(
+            CONFIG.commitWaitMs + 250,
+            900
+          );
+
+        const startedAt =
+          Date.now();
+
+        let allConfirmed = false;
+
+        while (
+          !allConfirmed &&
+          Date.now() - startedAt < verifyTimeoutMs
+        ) {
+          await sleep(35);
+
+          const currentRow =
+            readExamRow(item.exam);
+
+          allConfirmed =
+            !!currentRow &&
+            pending.every(def =>
+              sameNumericValue(
+                currentRow[def.gridColumn],
+                def.expected
+              )
+            );
+        }
+      }
+
+      // Verifica finale del fast path. Ogni campo rimasto non confermato
+      // usa il percorso resiliente storico, indipendentemente dagli altri.
+      for (const def of pending) {
+        const current =
+          readExamRow(item.exam)?.[def.gridColumn]?.trim() || "";
+
+        if (sameNumericValue(current, def.expected)) {
+          fieldResults[def.key] = {
+            requested: true,
+            verified: true,
+            label: def.label,
+            expected: def.expected,
+            current
+          };
+
+          log(
+            `${def.label} verificato (fast row)`,
+            item.exam,
+            current
+          );
+
+          continue;
+        }
+
+        fieldResults[def.key] =
+          await setExamFieldResilient(
+            item.exam,
+            def.fieldIndex,
+            def.gridColumn,
+            def.expected,
+            def.label,
+            3
+          );
+      }
+    }
+
+    return {
+      exam: item.exam,
+      fields: fieldResults,
+      allVerified:
+        fieldResults.min.verified &&
+        fieldResults.max.verified &&
+        fieldResults.value.verified
+    };
+  }
+
+  async function resetGridEditorForDateRetry(examName) {
+    try {
+      const row = getPreferredExamRow(examName);
+      if (!row) return;
+
+      const cells = [...row.querySelectorAll("td.v-grid-cell")];
+      const resetCell =
+        cells[CONFIG.examNameColumn] ||
+        cells[CONFIG.prescriptionDateColumn ?? 1];
+
+      if (resetCell) {
+        vaadinClick(resetCell);
+        await sleep(220);
+      }
+
+      // Escape aiuta a chiudere eventuali editor GWT rimasti sospesi.
+      const target = document.activeElement || document.body;
+      dispatchVaadinKey(target, "keydown", "Escape", "Escape", 27);
+      dispatchVaadinKey(target, "keyup", "Escape", "Escape", 27);
+      await sleep(120);
+    } catch {}
+  }
+
+  async function setExamDateResilient(
+    examName,
+    reportDate,
+    attempts = 3
+  ) {
+    await ensureExamRowVisible(examName);
+
+    const isoDate = normalizeDateValue(reportDate);
+    if (!isoDate) return true;
+
+    const already =
+      readExamRow(examName)?.[CONFIG.resultDateColumn] || "";
+
+    if (sameDateValue(already, isoDate)) return true;
+
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      if (attempt > 1) {
+        await resetGridEditorForDateRetry(examName);
+      }
+
+      const ok = await setExamDate(examName, reportDate);
+      if (ok) return true;
+
+      // Prima di riprovare controlla comunque la Grid:
+      // talvolta Vaadin aggiorna in ritardo dopo che setExamDate
+      // ha già concluso il proprio timeout.
+      for (let i = 0; i < 4; i++) {
+        await sleep(120);
+
+        const current =
+          readExamRow(examName)?.[CONFIG.resultDateColumn] || "";
+
+        if (sameDateValue(current, isoDate)) {
+          log(
+            "Data referto confermata in ritardo",
+            examName,
+            current
+          );
+          return true;
+        }
+      }
+    }
+
+    return false;
+  }
+
+  async function setExamRecords(items, onProgress = null) {
+    const completed = [];
+    const fieldStatus = [];
+    const fieldWarnings = [];
+    const dateVerified = [];
+    const dateWarnings = [];
+
+    // v0.14.4: la Data esito resta SEMPRE la prima modifica della riga.
+    // Se Vaadin non rende subito visibile il commit, non generiamo però
+    // immediatamente un warning: il successivo commit dell'editor numerico
+    // può completare anche il DateField rimasto pendente. In quel caso la
+    // data viene ricontrollata dopo Min/Max/Valore e, solo se ancora diversa,
+    // viene eseguito un unico rescue mirato prima del warning finale.
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      let dateWasImmediatelyVerified = !item.reportDate;
+
+      if (item.reportDate) {
+        onProgress?.(
+          i + 1,
+          items.length,
+          item,
+          "dates"
+        );
+
+        dateWasImmediatelyVerified =
+          await setExamDateResilient(
+            item.exam,
+            item.reportDate,
+            3
+          );
+
+        if (dateWasImmediatelyVerified) {
+          dateVerified.push(item.exam);
+        } else {
+          console.info(
+            `Segretario MMG: Data esito di "${item.exam}" non ancora confermata; ` +
+            "verifica rinviata dopo il commit della riga."
+          );
+        }
+
+        await sleep(20);
+      }
+
+      onProgress?.(
+        i + 1,
+        items.length,
+        item,
+        "values"
+      );
+
+      const status =
+        await setExamRecord(item);
+
+      completed.push(item);
+      fieldStatus.push(status);
+
+      for (const key of ["min", "max", "value"]) {
+        const field = status.fields[key];
+
+        if (
+          field?.requested &&
+          !field.verified
+        ) {
+          fieldWarnings.push({
+            exam: item.exam,
+            field: field.label,
+            expected: field.expected,
+            current: field.current
+          });
+        }
+      }
+
+      // Seconda fase di verifica data: prima osserva se il commit numerico
+      // ha reso visibile la data già inserita. Solo in caso contrario tenta
+      // una singola correzione finale. Questo elimina i falsi warning senza
+      // indebolire la verifica e senza rallentare le righe normali.
+      if (item.reportDate && !dateWasImmediatelyVerified) {
+        const isoDate = normalizeDateValue(item.reportDate);
+        let gridValue = "";
+
+        const becameVisible = await pollUntil(() => {
+          gridValue =
+            readExamRow(item.exam)?.[
+              CONFIG.resultDateColumn
+            ] || "";
+
+          return sameDateValue(gridValue, isoDate)
+            ? gridValue
+            : null;
+        }, 650, 35);
+
+        let finalDateOk = !!becameVisible;
+
+        if (!finalDateOk) {
+          finalDateOk =
+            await setExamDateResilient(
+              item.exam,
+              item.reportDate,
+              1
+            );
+        }
+
+        gridValue =
+          readExamRow(item.exam)?.[
+            CONFIG.resultDateColumn
+          ] || gridValue || "";
+
+        if (finalDateOk || sameDateValue(gridValue, isoDate)) {
+          dateVerified.push(item.exam);
+          log(
+            "Data referto confermata dopo commit riga",
+            item.exam,
+            gridValue
+          );
+        } else {
+          dateWarnings.push({
+            exam: item.exam,
+            expected:
+              formatDateForGrid(
+                item.reportDate
+              ),
+            current: gridValue
+          });
+
+          console.warn(
+            `Segretario MMG: Data esito realmente non verificata per "${item.exam}". ` +
+            `Grid="${gridValue}", atteso="${formatDateForGrid(item.reportDate)}".`
+          );
+        }
+      }
+
+      await sleep(30);
+    }
+
+    return {
+      success: true,
+      completed,
+      fieldStatus,
+      fieldWarnings,
+      dateVerified,
+      dateWarnings
+    };
+  }
+
+
+  // ============================================================
+  // REFERTO LUNGO VAADIN
+  // ============================================================
+
+  function isVisibleElement(el) {
+    if (!el) return false;
+    const r = el.getBoundingClientRect();
+    const s = getComputedStyle(el);
+
+    return (
+      r.width > 0 &&
+      r.height > 0 &&
+      s.display !== "none" &&
+      s.visibility !== "hidden"
+    );
+  }
+
+  async function waitForWritableResultFilter() {
+    const loops = Math.ceil(CONFIG.editorWaitMs / 100);
+
+    for (let i = 0; i < loops; i++) {
+      await sleep(100);
+
+      const inputs = [
+        ...document.querySelectorAll(".v-filterselect-input")
+      ].filter(el =>
+        isVisibleElement(el) &&
+        !el.disabled &&
+        !el.readOnly &&
+        !el.classList.contains("v-filterselect-input-readonly")
+      );
+
+      if (inputs.length === 1) return inputs[0];
+
+      // Nell'editor noto ci sono due filterselect:
+      // il primo editabile = Risultato, il secondo readonly = Eseguito presso.
+      if (inputs.length > 1) return inputs[0];
+    }
+
+    return null;
+  }
+
+  function dispatchLegacyKey(input, type, key, code, keyCode) {
+    const event = new KeyboardEvent(type, {
+      key,
+      code,
+      bubbles: true,
+      cancelable: true
+    });
+
+    for (const prop of ["keyCode", "which", "charCode"]) {
+      try {
+        Object.defineProperty(event, prop, {
+          configurable: true,
+          get: () => keyCode
+        });
+      } catch {}
+    }
+
+    input.dispatchEvent(event);
+  }
+
+  function filterSelectCandidateScore(candidateText, targetText) {
+    const rawCandidate = String(candidateText || "").trim().toUpperCase();
+    const rawTarget = String(targetText || "").trim().toUpperCase();
+
+    // v0.15.33: quando il filtro è un codice CVP/Eumed, il codice della
+    // proposta deve coincidere ESATTAMENTE. Un codice padre/prefisso non deve
+    // poter selezionare un fratello (es. 90.56.3_2 CEA vs 90.56.3_3 GLYPICAN).
+    const codePattern = /^\d{2}\.\d{2}\.[A-Z0-9]+(?:_[A-Z0-9]+)?$/;
+    if (codePattern.test(rawTarget)) {
+      const codes = rawCandidate.match(/\b\d{2}\.\d{2}\.[A-Z0-9]+(?:_[A-Z0-9]+)?\b/g) || [];
+      if (codes.length) {
+        return codes.includes(rawTarget) ? 12000 : 0;
+      }
+    }
+
+    const text = normalizeExamName(candidateText);
+    const target = normalizeExamName(targetText);
+    if (!text || !target) return 0;
+
+    if (text === target) return 10000;
+
+    // Vaadin/GWT puo' aggiungere alla stessa cella codice amministrativo,
+    // spazi o markup non visibili: se il nome catalogo completo e' contenuto
+    // nella proposta, la consideriamo comunque una corrispondenza fortissima.
+    if (text.includes(target)) {
+      return 9000 - Math.min(1000, Math.max(0, text.length - target.length));
+    }
+
+    if (target.includes(text) && text.length >= Math.min(18, target.length)) {
+      return 8000 - Math.min(1000, Math.max(0, target.length - text.length));
+    }
+
+    const tTokens = significantTokens(target);
+    const cTokens = significantTokens(text);
+    if (!tTokens.length || !cTokens.length) return 0;
+
+    const cSet = new Set(cTokens);
+    const matched = tTokens.filter(token => cSet.has(token)).length;
+    const coverage = matched / tTokens.length;
+    const reverse = matched / cTokens.length;
+
+    if (coverage === 1 && reverse >= 0.55) {
+      return 7000 + Math.round(reverse * 500);
+    }
+    if (coverage >= 0.8 && matched >= 3 && reverse >= 0.5) {
+      return 5000 + Math.round(coverage * 500 + reverse * 250);
+    }
+
+    return 0;
+  }
+
+  function findVisibleFilterSelectOption(targetText) {
+    const selectors = [
+      ".v-filterselect-suggestpopup .gwt-MenuItem",
+      ".v-filterselect-suggestpopup td",
+      ".v-filterselect-suggestpopup tr",
+      ".gwt-SuggestBoxPopup .gwt-MenuItem",
+      ".gwt-SuggestBoxPopup td",
+      ".gwt-SuggestBoxPopup tr",
+      ".v-filterselect-suggestmenu .gwt-MenuItem",
+      ".v-filterselect-suggestmenu td",
+      "[role='option']"
+    ];
+
+    const seen = new Set();
+    let best = null;
+    let bestScore = 0;
+
+    for (const selector of selectors) {
+      for (const candidate of document.querySelectorAll(selector)) {
+        if (seen.has(candidate)) continue;
+        seen.add(candidate);
+        if (!isActuallyVisibleInViewport(candidate) && !isVisibleElement(candidate)) continue;
+
+        const score = filterSelectCandidateScore(
+          String(candidate.textContent || "").trim(),
+          targetText
+        );
+        if (!score || score <= bestScore) continue;
+
+        const clickable =
+          candidate.closest(
+            ".gwt-MenuItem, td.gwt-MenuItem, [role='option'], tr"
+          ) || candidate;
+
+        if (clickable.closest(".v-grid-body")) continue;
+
+        best = clickable;
+        bestScore = score;
+      }
+    }
+
+    return best;
+  }
+
+  async function waitForFilterSelectOption(targetText, timeoutMs = 1800) {
+    const loops = Math.ceil(timeoutMs / 100);
+
+    for (let i = 0; i < loops; i++) {
+      const option = findVisibleFilterSelectOption(targetText);
+      if (option) return option;
+      await sleep(100);
+    }
+
+    return null;
+  }
+
+  async function typeFilterText(input, targetText) {
+    vaadinClick(input);
+    await sleep(80);
+    input.select();
+    await sleep(30);
+
+    for (const char of targetText) {
+      typeVaadinChar(input, char);
+    }
+
+    await sleep(220);
+  }
+
+  async function chooseFilterSelectOption(input, targetText) {
+    const wrapper = input.closest(".v-filterselect");
+    const dropButton = wrapper?.querySelector(".v-filterselect-button");
+
+    // 1) Apri la vera tendina e prova a cliccare la voce reale.
+    vaadinClick(input);
+    await sleep(80);
+
+    if (dropButton) {
+      vaadinClick(dropButton);
+      await sleep(180);
+    }
+
+    let option = await waitForFilterSelectOption(targetText, 1000);
+
+    if (option) {
+      vaadinClick(option);
+      await sleep(300);
+
+      // Non richiediamo che il vecchio input conservi il valore:
+      // Vaadin può chiudere/ricreare l'editor subito dopo la selezione.
+      return true;
+    }
+
+    // 2) Filtra digitando e clicca la proposta reale.
+    await typeFilterText(input, targetText);
+    option = await waitForFilterSelectOption(targetText, 1200);
+
+    if (option) {
+      vaadinClick(option);
+      await sleep(300);
+      return true;
+    }
+
+    // 3) Fallback GWT: testo filtrato + ArrowDown + Enter con keyCode/which.
+    // È importante usare gli eventi legacy perché Vaadin 8/GWT spesso
+    // non legge soltanto KeyboardEvent.key.
+    dispatchLegacyKey(input, "keydown", "ArrowDown", "ArrowDown", 40);
+    dispatchLegacyKey(input, "keyup", "ArrowDown", "ArrowDown", 40);
+    await sleep(100);
+
+    dispatchLegacyKey(input, "keydown", "Enter", "Enter", 13);
+    dispatchLegacyKey(input, "keypress", "Enter", "Enter", 13);
+    dispatchLegacyKey(input, "keyup", "Enter", "Enter", 13);
+    await sleep(320);
+
+    // A questo punto la verifica vera viene fatta sulla Grid dal chiamante.
+    return true;
+  }
+
+  async function waitForGridText(examName, column, expectedText, timeoutMs = 3000) {
+    const expected = normalizeExamName(expectedText);
+    const loops = Math.ceil(timeoutMs / 100);
+
+    for (let i = 0; i < loops; i++) {
+      const value = readExamRow(examName)?.[column]?.trim() || "";
+      if (normalizeExamName(value) === expected) return value;
+      await sleep(100);
+    }
+
+    return "";
+  }
+
+  async function setExamResultVediReferto(examName) {
+    await ensureExamRowVisible(examName);
+
+    const current = readExamRow(examName)?.[CONFIG.resultColumn]?.trim() || "";
+    if (normalizeExamName(current) === "VEDI REFERTO") return true;
+
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      const opened = await openGridEditorForExam(examName, CONFIG.resultColumn, "result");
+
+      if (!opened?.filter) {
+        console.error(`Segretario MMG: Risultato "${examName}": editor Risultato non aperto.`);
+        return false;
+      }
+
+      const input = opened.filter;
+      await chooseFilterSelectOption(input, "Vedi referto");
+      await sleep(250);
+
+      // Forza la chiusura/commit dell'editor cliccando una cella non editabile.
+      const freshRow = getPreferredExamRow(examName);
+      const commitCell = freshRow
+        ? [...freshRow.querySelectorAll("td.v-grid-cell")][CONFIG.prescriptionDateColumn]
+        : null;
+
+      if (commitCell) {
+        vaadinClick(commitCell);
+        await sleep(250);
+      }
+
+      const gridResult = await waitForGridText(
+        examName,
+        CONFIG.resultColumn,
+        "Vedi referto",
+        2600
+      );
+
+      if (gridResult) {
+        log("Risultato Vedi referto verificato", examName);
+        return true;
+      }
+
+      if (attempt === 1) {
+        log("Primo tentativo Vedi referto non confermato; riprovo.", examName);
+        await sleep(250);
+      }
+    }
+
+    const currentValue = readExamRow(examName)?.[CONFIG.resultColumn]?.trim() || "";
+    const popups = [
+      ...document.querySelectorAll(
+        ".v-filterselect-suggestpopup, .gwt-SuggestBoxPopup"
+      )
+    ]
+      .filter(isVisibleElement)
+      .map(x => x.outerHTML.slice(0, 6000));
+
+    console.error(
+      `Segretario MMG: STOP Risultato, Grid="${currentValue}", atteso="Vedi referto".`,
+      popups.length ? popups : "Nessun popup FilterSelect visibile"
+    );
+    return false;
+  }
+
+  async function waitForLongReportPopup() {
+    const loops = Math.ceil(CONFIG.editorWaitMs / 100);
+
+    for (let i = 0; i < loops; i++) {
+      await sleep(100);
+
+      const windows = [
+        ...document.querySelectorAll(".v-window[role='dialog'], .v-window")
+      ].filter(isVisibleElement);
+
+      for (const popup of windows.reverse()) {
+        const header =
+          popup.querySelector(".v-window-header")?.textContent?.trim() || "";
+
+        const textarea =
+          popup.querySelector("textarea.v-textarea, textarea");
+
+        if (
+          normalizeExamName(header) === "REFERTO" &&
+          textarea &&
+          isVisibleElement(textarea)
+        ) {
+          return { popup, textarea };
+        }
+      }
+    }
+
+    return null;
+  }
+
+  async function openLongReportPopup(examName) {
+    await ensureExamRowVisible(examName);
+
+    const row = getPreferredExamRow(examName);
+
+    if (!row) {
+      console.error(
+        `Segretario MMG: apertura referto lungo "${examName}": nessuna riga trovata.`
+      );
+      return null;
+    }
+    const cells = [...row.querySelectorAll("td.v-grid-cell")];
+    const cell = cells[CONFIG.longReportButtonColumn];
+
+    if (!cell) {
+      console.error(
+        `Segretario MMG: cella referto lungo ${CONFIG.longReportButtonColumn} assente.`
+      );
+      return null;
+    }
+
+    const button = cell.querySelector(
+      "button, .v-nativebutton, .v-button, [role='button']"
+    );
+
+    if (!button) {
+      console.error("Segretario MMG: pulsante Visualizza referto lungo non trovato.");
+      return null;
+    }
+
+    vaadinClick(button);
+
+    const found = await waitForLongReportPopup();
+
+    if (!found) {
+      console.error("Segretario MMG: popup Referto non comparso.");
+      return null;
+    }
+
+    return found;
+  }
+
+  async function closeLongReportPopup(popup) {
+    const closeBox = popup?.querySelector(".v-window-closebox");
+
+    if (!closeBox) {
+      console.error("Segretario MMG: X di chiusura popup Referto non trovata.");
+      return false;
+    }
+
+    vaadinClick(closeBox);
+
+    for (let i = 0; i < 20; i++) {
+      await sleep(100);
+      if (!isVisibleElement(popup)) return true;
+    }
+
+    return !isVisibleElement(popup);
+  }
+
+  async function writeLongReportText(examName, text) {
+    const target = normalizeLongReportText(text);
+
+    if (!target) {
+      console.error("Segretario MMG: referto lungo vuoto.");
+      return false;
+    }
+
+    let opened = await openLongReportPopup(examName);
+    if (!opened) return false;
+
+    const { popup, textarea } = opened;
+
+    vaadinClick(textarea);
+    textarea.focus();
+    textarea.select();
+    await sleep(40);
+
+    let inserted = false;
+
+    try {
+      inserted = document.execCommand("insertText", false, target);
+    } catch {
+      inserted = false;
+    }
+
+    if (!inserted || normalizeLongReportText(textarea.value) !== target) {
+      textarea.value = target;
+      textarea.dispatchEvent(new InputEvent("input", {
+        bubbles: true,
+        inputType: "insertText",
+        data: target
+      }));
+    }
+
+    textarea.dispatchEvent(new Event("change", { bubbles: true }));
+    textarea.dispatchEvent(new FocusEvent("focusout", {
+      bubbles: true,
+      relatedTarget: document.body
+    }));
+    textarea.blur();
+
+    await sleep(250);
+
+    if (normalizeLongReportText(textarea.value) !== target) {
+      console.error("Segretario MMG: testo del referto non presente nel textarea dopo la scrittura.");
+      return false;
+    }
+
+    if (!(await closeLongReportPopup(popup))) {
+      console.error("Segretario MMG: impossibile chiudere il popup Referto.");
+      return false;
+    }
+
+    await sleep(300);
+
+    // Verifica forte: riapri e controlla che Vaadin abbia mantenuto il testo.
+    opened = await openLongReportPopup(examName);
+    if (!opened) return false;
+
+    const persisted =
+      normalizeLongReportText(opened.textarea.value) === target;
+
+    if (!persisted) {
+      console.error(
+        "Segretario MMG: STOP, il testo del referto lungo non è persistito dopo la chiusura."
+      );
+    }
+
+    await closeLongReportPopup(opened.popup);
+    await sleep(200);
+
+    return persisted;
+  }
+
+  async function setExamResultVediRefertoResilient(examName, attempts = 3) {
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      const ok = await setExamResultVediReferto(examName);
+      if (ok) return true;
+      await resetGridEditorForFieldRetry(examName);
+      await sleep(180);
+    }
+    return false;
+  }
+
+  async function writeLongReportTextResilient(examName, text, attempts = 2) {
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      const ok = await writeLongReportText(examName, text);
+      if (ok) return true;
+      await resetGridEditorForFieldRetry(examName);
+      await sleep(220);
+    }
+    return false;
+  }
+
+  async function setLongReportRecordDetailed(item) {
+    if (item.reportDate) {
+      setPreferredReportDateForExam(
+        item.exam,
+        item.reportDate
+      );
+    }
+
+    const compatibleRow =
+      await ensureExamRowVisible(
+        item.exam,
+        2,
+        item.reportDate || ""
+      );
+
+    const status = {
+      exam: item.exam,
+      resultVerified: false,
+      textVerified: false,
+      dateVerified: !item.reportDate,
+      warnings: []
+    };
+
+    if (!compatibleRow) {
+      status.warnings.push({
+        exam: item.exam,
+        field: "Data prescriz./riga Eumed"
+      });
+      return status;
+    }
+
+    // Anche per i referti lunghi la Data esito è la PRIMA modifica
+    // effettuata sulla riga.
+    if (item.reportDate) {
+      status.dateVerified =
+        await setExamDateResilient(
+          item.exam,
+          item.reportDate,
+          3
+        );
+
+      if (!status.dateVerified) {
+        status.warnings.push({
+          exam: item.exam,
+          field: "Data esito"
+        });
+      }
+
+      await sleep(100);
+    }
+
+    status.resultVerified =
+      await setExamResultVediRefertoResilient(
+        item.exam,
+        3
+      );
+
+    if (!status.resultVerified) {
+      status.warnings.push({
+        exam: item.exam,
+        field: "Vedi referto"
+      });
+      return status;
+    }
+
+    await sleep(180);
+
+    status.textVerified =
+      await writeLongReportTextResilient(
+        item.exam,
+        item.text,
+        2
+      );
+
+    if (!status.textVerified) {
+      status.warnings.push({
+        exam: item.exam,
+        field: "Testo referto lungo"
+      });
+      return status;
+    }
+
+    return status;
+  }
+
+  async function setLongReportRecord(item) {
+    const status = await setLongReportRecordDetailed(item);
+    return status.resultVerified && status.textVerified;
+  }
+
+  async function setLongReportRecords(items, onProgress = null) {
+    const completed = [];
+
+    for (let i = 0; i < items.length; i++) {
+      onProgress?.(i + 1, items.length, items[i]);
+
+      const ok = await setLongReportRecord(items[i]);
+
+      if (!ok) {
+        return {
+          success: false,
+          completed,
+          failed: items[i]
+        };
+      }
+
+      completed.push(items[i]);
+      await sleep(300);
+    }
+
+    return {
+      success: true,
+      completed
+    };
+  }
+
+  function parseDirectLine(line) {
+    line = line.trim();
+    if (!line) return null;
+
+    line = line.replace(/^[\-\*\u2022]\s*/, "");
+
+    const match = line.match(
+      /^(.*?)\s*(?:[:=]\s*)?([+-]?\d+(?:[.,]\d+)?)\s*$/
+    );
+
+    if (!match) {
+      return {
+        success: false,
+        original: line,
+        error: "Formato non riconosciuto"
+      };
+    }
+
+    return {
+      success: true,
+      exam: match[1].replace(/[:=]\s*$/, "").trim(),
+      value: normalizeValueString(match[2]),
+      original: line
+    };
+  }
+
+  function parseDirectText(text) {
+    return String(text)
+      .split(/[\n;]+/)
+      .map(parseDirectLine)
+      .filter(Boolean);
+  }
+
+  const OCR_SCHEMA = {
+    type: "object",
+    properties: {
+      text: { type: "string" }
+    },
+    required: ["text"]
+  };
+
+  async function ollamaChatOnce(
+    messages,
+    onProgress = null,
+    numPredict = CONFIG.aiMaxTokens,
+    formatSchema = null
+  ) {
+    const aiRequestStarted = Date.now();
+    await aiModelInitialization;
+    await aiModelSelectionTask;
+    if (!selectedAiModelInfo || selectedAiModelInfo.completion === false) {
+      throw new Error("Scegli un modello IA disponibile nella schermata iniziale. Se Ollama non risponde, avvialo e aggiorna l’elenco.");
+    }
+    if (selectedAiModelInfo.vision === false && messages.some(message => message.images?.length)) {
+      throw new Error("Il modello scelto legge soltanto testo. Torna alla schermata iniziale e seleziona un modello che legga anche immagini.");
+    }
+    return new Promise((resolve, reject) => {
+      try {
+        assertExtensionContext(
+          "connessione a IA/Ollama"
+        );
+      } catch (error) {
+        reject(error);
+        return;
+      }
+
+      const requestId =
+        `mmg-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+      let port;
+
+      try {
+        port = chrome.runtime.connect({
+          name: "segretario-mmg-ollama"
+        });
+      } catch (error) {
+        if (isExtensionContextInvalidatedError(error)) {
+          reject(
+            makeExtensionContextError(
+              "connessione a IA/Ollama"
+            )
+          );
+        } else {
+          reject(error);
+        }
+        return;
+      }
+
+      let finished = false;
+
+      function cleanup() {
+        if (finished) return;
+        finished = true;
+        try { port.disconnect(); } catch {}
+      }
+
+      port.onMessage.addListener(message => {
+        if (message?.requestId !== requestId) return;
+
+        if (message.type === "OLLAMA_PROGRESS") {
+          onProgress?.(message);
+          return;
+        }
+
+        if (message.type === "OLLAMA_RESULT") {
+          recordDiagnosticEvent("ia_completata", { durationMs: Date.now() - aiRequestStarted,
+            inputCharacters: messages.reduce((n, item) => n + String(item.content || "").length, 0),
+            outputCharacters: String(message.content || "").length,
+            images: messages.reduce((n, item) => n + (item.images?.length || 0), 0) });
+          const content = message.content;
+          cleanup();
+          resolve(content);
+          return;
+        }
+
+        if (message.type === "OLLAMA_ERROR") {
+          recordDiagnosticEvent("ia_errore", { durationMs: Date.now() - aiRequestStarted });
+          cleanup();
+          reject(
+            new Error(
+              message.message ||
+              "Errore Ollama."
+            )
+          );
+        }
+      });
+
+      port.onDisconnect.addListener(() => {
+        if (finished) return;
+
+        finished = true;
+
+        let lastErrorMessage = "";
+        try {
+          lastErrorMessage =
+            chrome.runtime.lastError?.message || "";
+        } catch {}
+
+        if (
+          !extensionContextIsValid() ||
+          /extension context invalidated/i.test(
+            lastErrorMessage
+          )
+        ) {
+          reject(
+            makeExtensionContextError(
+              "durante l'analisi IA"
+            )
+          );
+          return;
+        }
+
+        reject(
+          new Error(
+            lastErrorMessage ||
+            "Connessione interna all'estensione interrotta durante l'analisi."
+          )
+        );
+      });
+
+      try {
+        port.postMessage({
+          type: "OLLAMA_CHAT",
+          requestId,
+          payload: {
+            model: CONFIG.aiModel,
+            messages,
+            num_predict: numPredict,
+            keep_alive: "30m",
+            format: formatSchema
+          }
+        });
+      } catch (error) {
+        cleanup();
+
+        if (isExtensionContextInvalidatedError(error)) {
+          reject(
+            makeExtensionContextError(
+              "invio richiesta a IA"
+            )
+          );
+        } else {
+          reject(error);
+        }
+      }
+    });
+  }
+
+  function resultIdentityForOverride(item) {
+    const label = cleanModelLabLabel(
+      `${item?.raw_label || ""} ${item?.exam || ""}`
+    );
+
+    const concept = getExamConcept(label);
+    if (concept) return `CONCEPT:${concept}`;
+
+    const catalog = matchCatalog(label);
+    if (catalog?.entry?.code) {
+      return `CATALOG:${catalog.entry.code}`;
+    }
+
+    return "";
+  }
+
+  function applyDeterministicResultOverrides(rawResults, deterministicResults) {
+    if (!deterministicResults?.length) return rawResults;
+
+    const identities = new Set(
+      deterministicResults
+        .map(resultIdentityForOverride)
+        .filter(Boolean)
+    );
+
+    const kept = rawResults.filter(item => {
+      const identity = resultIdentityForOverride(item);
+      return !identity || !identities.has(identity);
+    });
+
+    return [...kept, ...deterministicResults];
+  }
+
+  function conceptsCompatible(aiExam, rawLabel) {
+    const aiConcept = getExamConcept(aiExam);
+    const rawConcept = getExamConcept(rawLabel);
+
+    if (!aiConcept || !rawConcept) {
+      return {
+        ok: true,
+        aiConcept,
+        rawConcept
+      };
+    }
+
+    return {
+      ok: aiConcept === rawConcept,
+      aiConcept,
+      rawConcept
+    };
+  }
+
+  // ============================================================
+  // FILE LOCALI: PDF / JPEG / PNG
+  // ============================================================
+
+  let pdfJsPromise = null;
+
+  async function getPdfJs() {
+    if (!pdfJsPromise) {
+      const url =
+        extensionUrl(
+          "vendor/pdf.mjs",
+          "caricamento PDF.js"
+        );
+
+      pdfJsPromise = import(url).then(module => {
+        if (module.__SEGRETARIO_PDFJS_STUB__) {
+          throw new Error(
+            "PDF.js non è ancora installato. Esegui una volta INSTALLA_PDFJS.bat " +
+            "nella cartella dell'estensione, poi ricarica l'estensione da chrome://extensions."
+          );
+        }
+
+        if (!module?.getDocument || !module?.GlobalWorkerOptions) {
+          throw new Error("PDF.js locale non valido o incompleto.");
+        }
+
+        module.GlobalWorkerOptions.workerSrc =
+          extensionUrl("vendor/pdf.worker.mjs", "worker PDF.js");
+
+        return module;
+      }).catch(error => {
+        pdfJsPromise = null;
+        throw error;
+      });
+    }
+
+    return pdfJsPromise;
+  }
+
+  async function canvasToJpegBase64(canvas, quality = 0.92) {
+    const dataUrl = canvas.toDataURL("image/jpeg", quality);
+    return dataUrl.slice(dataUrl.indexOf(",") + 1);
+  }
+
+  async function renderPdfPageToBase64(page) {
+    const baseViewport = page.getViewport({ scale: 1 });
+    const targetWidth = 1800;
+    const scale = Math.min(3.2, Math.max(1.7, targetWidth / baseViewport.width));
+    const viewport = page.getViewport({ scale });
+
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.ceil(viewport.width);
+    canvas.height = Math.ceil(viewport.height);
+
+    const context = canvas.getContext("2d", { alpha: false });
+    context.fillStyle = "white";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+
+    await page.render({
+      canvasContext: context,
+      viewport
+    }).promise;
+
+    return canvasToJpegBase64(canvas, 0.92);
+  }
+
+  async function imageFileToBase64(file) {
+    const bitmap = await createImageBitmap(file);
+
+    try {
+      const maxDimension = CONFIG.imageMaxDimension;
+      const scale = Math.min(
+        1,
+        maxDimension / Math.max(bitmap.width, bitmap.height)
+      );
+
+      const width = Math.max(1, Math.round(bitmap.width * scale));
+      const height = Math.max(1, Math.round(bitmap.height * scale));
+
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+
+      const context = canvas.getContext("2d", { alpha: false });
+      context.fillStyle = "white";
+      context.fillRect(0, 0, width, height);
+      context.drawImage(bitmap, 0, 0, width, height);
+
+      return await canvasToJpegBase64(canvas, 0.93);
+    } finally {
+      bitmap.close?.();
+    }
+  }
+
+  let paddleBrowserPromise = null;
+  let paddleSandboxFrame = null;
+  let paddleSandboxClient = null;
+
+  function base64ToBlob(base64, mime = "image/jpeg") {
+    const binary = atob(String(base64 || ""));
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return new Blob([bytes], { type: mime });
+  }
+
+  function paddleItemGeometry(item) {
+    const poly = Array.isArray(item?.poly) ? item.poly : [];
+    const xs = poly.map(p => Number(p?.[0])).filter(Number.isFinite);
+    const ys = poly.map(p => Number(p?.[1])).filter(Number.isFinite);
+    if (!xs.length || !ys.length) return { x1:0, x2:0, y1:0, y2:0, h:1, cy:0 };
+    const x1=Math.min(...xs), x2=Math.max(...xs), y1=Math.min(...ys), y2=Math.max(...ys);
+    return { x1,x2,y1,y2,h:Math.max(1,y2-y1),cy:(y1+y2)/2 };
+  }
+
+  function paddleItemsToLayoutText(items, minScore = CONFIG.paddleOcrMinScore) {
+    const clean=(items||[]).map(item=>({
+      text:String(item?.text||"").trim(),
+      score:Number(item?.score ?? 1),
+      ...paddleItemGeometry(item)
+    })).filter(x=>x.text && Number.isFinite(x.score) && x.score>=minScore);
+
+    clean.sort((a,b)=>a.cy-b.cy || a.x1-b.x1);
+    const rows=[];
+    for(const item of clean){
+      let best=null, dist=Infinity;
+      for(const row of rows){
+        const tol=Math.max(7,0.52*Math.max(row.h,item.h));
+        const d=Math.abs(item.cy-row.cy);
+        if(d<=tol && d<dist){best=row;dist=d;}
+      }
+      if(!best) rows.push({cy:item.cy,h:item.h,items:[item]});
+      else {
+        best.items.push(item);
+        const n=best.items.length;
+        best.cy=(best.cy*(n-1)+item.cy)/n;
+        best.h=Math.max(best.h,item.h);
+      }
+    }
+    rows.sort((a,b)=>a.cy-b.cy);
+    const lines=rows.map(row=>row.items.sort((a,b)=>a.x1-b.x1).map(x=>x.text).join("\t"));
+    const avg=clean.length?clean.reduce((s,x)=>s+x.score,0)/clean.length:0;
+    return {text:lines.join("\n").trim(),lines:lines.length,averageScore:avg,items:clean};
+  }
+
+  function destroyPaddleSandbox() {
+    try { paddleSandboxClient?.port?.close?.(); } catch {}
+    try { paddleSandboxFrame?.remove?.(); } catch {}
+    paddleSandboxClient = null;
+    paddleSandboxFrame = null;
+    paddleBrowserPromise = null;
+  }
+
+  async function createPaddleSandboxClient() {
+    assertExtensionContext("PaddleOCR sandbox");
+
+    const sandboxUrl = extensionUrl(CONFIG.paddleSandboxPath, "PaddleOCR sandbox");
+    const bundleUrl = extensionUrl(CONFIG.paddleModulePath, "PaddleOCR bundle");
+
+    // Controllo esplicito del bundle prima di aprire la sandbox.
+    const bundleResponse = await fetch(bundleUrl, { cache: "no-store" });
+    if (!bundleResponse.ok) {
+      throw new Error(`bundle PaddleOCR mancante (${bundleResponse.status})`);
+    }
+
+    const iframe = document.createElement("iframe");
+    iframe.src = sandboxUrl;
+    iframe.setAttribute("aria-hidden", "true");
+    iframe.tabIndex = -1;
+    iframe.style.position = "fixed";
+    iframe.style.width = "1px";
+    iframe.style.height = "1px";
+    iframe.style.left = "-10000px";
+    iframe.style.top = "-10000px";
+    iframe.style.border = "0";
+    iframe.style.opacity = "0";
+    iframe.style.pointerEvents = "none";
+
+    // Lo inseriamo nello shadow root del pannello per non interferire con Eumed.
+    shadow.appendChild(iframe);
+    paddleSandboxFrame = iframe;
+
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(
+        () => reject(new Error("Timeout caricamento sandbox PaddleOCR.")),
+        20_000
+      );
+      iframe.addEventListener("load", () => {
+        clearTimeout(timer);
+        resolve();
+      }, { once: true });
+      iframe.addEventListener("error", () => {
+        clearTimeout(timer);
+        reject(new Error("Impossibile caricare paddle_sandbox.html."));
+      }, { once: true });
+    });
+
+    const channel = new MessageChannel();
+    const port = channel.port1;
+    const pending = new Map();
+    let sequence = 0;
+
+    port.onmessage = event => {
+      const msg = event.data || {};
+      const waiter = pending.get(msg.id);
+      if (!waiter) return;
+
+      if (msg.type === "READY" || msg.type === "RESULT" || msg.type === "PONG") {
+        pending.delete(msg.id);
+        clearTimeout(waiter.timer);
+        waiter.resolve(msg.result);
+        return;
+      }
+
+      if (msg.type === "ERROR") {
+        pending.delete(msg.id);
+        clearTimeout(waiter.timer);
+        waiter.reject(new Error(msg?.error?.message || "Errore PaddleOCR sandbox."));
+      }
+    };
+    port.start?.();
+
+    function request(type, payload = {}, transfer = [], timeoutMs = 120_000) {
+      return new Promise((resolve, reject) => {
+        const id = `paddle-${Date.now()}-${++sequence}`;
+        const timer = setTimeout(() => {
+          pending.delete(id);
+          reject(new Error(`Timeout PaddleOCR sandbox durante ${type}.`));
+        }, timeoutMs);
+
+        pending.set(id, { resolve, reject, timer });
+
+        try {
+          port.postMessage({ type, id, ...payload }, transfer);
+        } catch (error) {
+          clearTimeout(timer);
+          pending.delete(id);
+          reject(error);
+        }
+      });
+    }
+
+    const initOptions = {
+      detectionModelUrl: extensionUrl(CONFIG.paddleDetModelPath,"modello Paddle detection"),
+      recognitionModelUrl: extensionUrl(CONFIG.paddleRecModelPath,"modello Paddle recognition"),
+      wasmPaths: extensionUrl(CONFIG.paddleWasmPath,"runtime ONNX WASM")
+    };
+
+    iframe.contentWindow.postMessage(
+      {
+        type: "SEGRETARIO_PADDLE_CONNECT",
+        options: initOptions
+      },
+      "*",
+      [channel.port2]
+    );
+
+    await request("INIT", {}, [], 120_000);
+
+    return {
+      port,
+      async predict(blob, options = {}) {
+        const bytes = await blob.arrayBuffer();
+        return request(
+          "PREDICT",
+          {
+            bytes,
+            mime: blob.type || "image/jpeg",
+            options
+          },
+          [bytes],
+          180_000
+        );
+      },
+      async ping() {
+        await request("PING", {}, [], 10_000);
+        return true;
+      }
+    };
+  }
+
+  async function getPaddleBrowserOcr() {
+    if (paddleBrowserPromise) return paddleBrowserPromise;
+
+    paddleBrowserPromise = (async () => {
+      try {
+        const client = await createPaddleSandboxClient();
+        paddleSandboxClient = client;
+        return client;
+      } catch (error) {
+        destroyPaddleSandbox();
+        throw new Error(
+          "PaddleOCR integrato non disponibile nella sandbox Chrome. " +
+          "Esegui INSTALLA_PADDLEOCR_BROWSER.bat, poi VERIFICA_PADDLEOCR_BROWSER.bat, " +
+          "ricarica l'estensione e fai Ctrl+Shift+R su Eumed. Dettaglio: " +
+          (error?.message || "")
+        );
+      }
+    })();
+
+    try {
+      return await paddleBrowserPromise;
+    } catch (error) {
+      paddleBrowserPromise = null;
+      throw error;
+    }
+  }
+
+  async function paddleOcrHealth() {
+    const ocr = await getPaddleBrowserOcr();
+    await ocr.ping();
+    return {
+      ok: true,
+      engine: "PaddleOCR sandbox",
+      model: "PP-OCRv6 tiny"
+    };
+  }
+
+  async function paddleOcrImageBase64(imageBase64, label, progressCallback=null) {
+    progressCallback?.({phase:"paddle_ocr_start",label});
+    const started=performance.now();
+    const ocr=await getPaddleBrowserOcr();
+    const blob=base64ToBlob(imageBase64,"image/jpeg");
+    const results=await ocr.predict(blob,{
+      textRecScoreThresh: CONFIG.paddleOcrMinScore,
+      textDetLimitSideLen: 1800,
+      textDetLimitType: "max"
+    });
+    const result=results?.[0];
+    const layout=paddleItemsToLayoutText(result?.items||[]);
+    if(!layout.text) throw new Error(`PaddleOCR non ha riconosciuto testo in ${label}.`);
+    const elapsed=Number(result?.metrics?.totalMs)||performance.now()-started;
+    progressCallback?.({
+      phase:"paddle_ocr_done",label,lines:layout.lines,
+      averageScore:layout.averageScore,elapsedMs:elapsed,
+      model:"PP-OCRv6 tiny · browser"
+    });
+    return layout.text;
+  }
+
+  async function qwenVisionOcrImageBase64(imageBase64,label,progressCallback=null){
+    const prompt=`Trascrivi fedelmente questa pagina di un referto di laboratorio italiano.\n\nREGOLE:\n- fai SOLO OCR, non interpretare e non fare diagnosi;\n- conserva nomi degli esami, valori, unità, intervalli di riferimento e date;\n- se la pagina contiene una tabella, restituisci UNA RIGA per riga visiva e separa le colonne con TAB;\n- usa la posizione visiva per associare correttamente Esame | Risultato | U.M. | Range;\n- non correggere valori plausibili e non inventare testo illeggibile;\n- nessun markdown.\n\nRestituisci JSON con un solo campo text.`;
+    progressCallback?.({phase:"qwen_ocr_start",label});
+    const content=await ollamaChat(
+      [{role:"user",content:prompt,images:[imageBase64]}],
+      info=>progressCallback?.({phase:"qwen_ocr_stream",label,chars:info?.chars||0}),
+      3600,
+      OCR_SCHEMA
+    );
+    const parsed=extractJSONObject(content);
+    const text=String(parsed?.text||"").trim();
+    if(!text) throw new Error(`IA Vision non ha restituito testo per ${label}.`);
+    progressCallback?.({phase:"qwen_ocr_done",label,chars:text.length});
+    return text;
+  }
+
+  async function extractTextFromPdfFile(file, progressCallback=null, options={}) {
+    const mode=options.mode||"auto"; // auto | paddle | qwen
+    const pdfjs=await getPdfJs();
+    const bytes=new Uint8Array(await file.arrayBuffer());
+    const pdf=await pdfjs.getDocument({data:bytes}).promise;
+    const pageTexts=[];
+    let pagesNeedingOcr=0;
+    const pages=[];
+
+    for(let pageNumber=1;pageNumber<=pdf.numPages;pageNumber++){
+      progressCallback?.({phase:"pdf_text",current:pageNumber,total:pdf.numPages});
+      const page=await pdf.getPage(pageNumber);
+      const textContent=await page.getTextContent();
+      const pageText=textContentToLines(textContent).trim();
+      const usefulChars=pageText.replace(/\s/g,"").length;
+      const needsOcr=mode!=="auto" || usefulChars<CONFIG.pdfTextPageMinChars;
+      if(needsOcr) pagesNeedingOcr++;
+      pages.push({pageNumber,page,pageText,needsOcr});
+    }
+
+    progressCallback?.({phase:"pdf_scan_detected",visionPages:pagesNeedingOcr,total:pdf.numPages,mode});
+    if(pagesNeedingOcr>CONFIG.pdfVisionMaxPages) throw new Error(`Il PDF richiede OCR su ${pagesNeedingOcr} pagine; limite ${CONFIG.pdfVisionMaxPages}.`);
+
+    const failures=[];
+    for(const info of pages){
+      if(!info.needsOcr){
+        pageTexts.push(`=== PAGINA ${info.pageNumber} - TESTO PDF ===\n${info.pageText}`);
+        continue;
+      }
+      const engine=mode==="qwen"?"qwen":"paddle";
+      progressCallback?.({phase:"pdf_ocr",engine,current:info.pageNumber,total:pdf.numPages});
+      const imageBase64=await renderPdfPageToBase64(info.page);
+      try{
+        const text=engine==="qwen"
+          ? await qwenVisionOcrImageBase64(imageBase64,`pagina ${info.pageNumber}/${pdf.numPages}`,progressCallback)
+          : await paddleOcrImageBase64(imageBase64,`pagina ${info.pageNumber}/${pdf.numPages}`,progressCallback);
+        pageTexts.push(`=== PAGINA ${info.pageNumber} - OCR ${engine==="qwen"?"IA":"LETTURA RAPIDA"} ===\n${text}`);
+      }catch(error){
+        failures.push({page:info.pageNumber,error:error?.message||String(error)});
+        if(mode!=="qwen") throw error;
+        pageTexts.push(`=== PAGINA ${info.pageNumber} - OCR IA NON COMPLETATO ===`);
+      }
+    }
+    if(mode==="qwen" && failures.length===pdf.numPages) throw new Error("Lettura con IA fallito su tutte le pagine. "+failures.map(x=>`P${x.page}: ${x.error}`).join(" | "));
+    progressCallback?.({phase:"ocr_complete",mode,pages:pdf.numPages,failures});
+    return pageTexts.join("\n\n").trim();
+  }
+
+  async function extractTextFromImageFile(file, progressCallback=null, options={}) {
+    const mode=options.mode||"paddle";
+    const imageBase64=await imageFileToBase64(file);
+    if(mode==="qwen") return qwenVisionOcrImageBase64(imageBase64,file.name||"immagine",progressCallback);
+    return paddleOcrImageBase64(imageBase64,file.name||"immagine",progressCallback);
+  }
+
+
+
+  // ============================================================
+  // v0.15.13 - alias LAD/FLC e nuovi complessi monoclonali/Bence-Jones
+  // v0.15.12 - preferenze cliniche: <x come x, TSH reflex contestuale, sierologie IgG/IgM
+  // v0.15.11 - audit hardening: comparatori, catalogo, sierologie, retry e guardie writer
+  // v0.15.0 - WORKFLOW REFERTO NON PRESCRITTO
+  // ============================================================
+
+  const WORKFLOW_MODE = {
+    PRESCRIBED: "prescribed",
+    UNPRESCRIBED: "unprescribed",
+    PRESCRIPTION_LIST: "prescription_list"
+  };
+
+  function renderPrescribedTransferBlock(transferText) {
+    if (!transferText) return "";
+    return `<div class="row warning"><b>Da inserire senza prescrizioni</b>
+      <span class="small">Copia questo blocco. Apri Registrazione esiti → Inserimento senza prescrizioni, scegli Referto non prescritto e incollalo nel campo del referto. Controlla l'anteprima prima di inserire.</span>
+      <textarea data-transfer-text readonly aria-label="Blocco da copiare per inserimento senza prescrizioni" style="width:100%;box-sizing:border-box;height:150px;margin-top:8px">${escapeHtml(transferText)}</textarea>
+      <button type="button" data-transfer-copy>Copia blocco</button><span class="small" data-transfer-status role="status"></span></div>`;
+  }
+
+  async function copyPrescribedTransferBlock(field) {
+    const text=String(field?.value || "");
+    if (!text) return false;
+    try { await navigator.clipboard.writeText(text); return true; } catch {}
+    try { field.focus();field.select();return document.execCommand("copy"); } catch {return false;}
   }
 
   // ------------------------------------------------------------
@@ -13691,173 +15159,6 @@ Output JSON compatto:
       hbvProfile,
       hbv: { hasHbsAg, hasAntiHbs, hasAntiHbc }
     };
-  }
-
-  function directCatalogCodeFromPrescriptionLabel(label) {
-    const raw = String(label || "").toUpperCase();
-    if (!raw) return null;
-
-    // Se l'utente incolla direttamente un codice del catalogo, usalo.
-    const candidates = labCatalog
-      .filter(entry => {
-        const code = String(entry?.code || "").toUpperCase().trim();
-        if (!code || code.length < 4) return false;
-        const escaped = code.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-        return new RegExp(`(^|[^A-Z0-9_.-])${escaped}([^A-Z0-9_.-]|$)`, "i").test(raw);
-      });
-
-    return candidates.length === 1 ? candidates[0] : null;
-  }
-
-  function preferredPrescriptionCatalogEntry(label, context = {}) {
-    const raw = sanitizeCreationCatalogAlias(label);
-    const n = normalizeExamName(raw);
-    if (!n) return null;
-
-    const direct = directCatalogCodeFromPrescriptionLabel(raw);
-    if (direct) return direct;
-    const reviewedAliases = {
-  "Colesterolo LDL": "90.13.C_0",
-  "PSA totale": "90.56.9_0",
-  "PSA libero": "90.56.9_0",
-  "Bilirubina totale": "90.10.5_3",
-  "Bilirubina reflex": "90.10.5_3",
-  "Elettroforesi dell'emoglobina": "90.66.7_2",
-  "Emoglobina A2 (HbA2)": "90.66.7_2",
-  "Emoglobina fetale (HbF)": "90.66.7_2",
-  "HbA2": "90.66.7_2",
-  "HbF": "90.66.7_2",
-  "Folati (acido folico)": "90.23.2_2",
-  "Folati": "90.23.2_2",
-  "Anticorpi anti-tireoperossidasi (anti-TPO)": "90.51.4_0",
-  "Anti-TPO": "90.51.4_0",
-  "Troponina cardiaca": "90.82.3_0",
-  "Immunoglobuline IgA totali": "90.69.4_7",
-  "Anticorpi antinucleo (ANA)": "90.52.4_0",
-  "Anticorpi anti-EBV VCA IgM": "91.21.6_0",
-  "Anticorpi anti-EBV VCA IgG": "91.21.6_0",
-  "Anticorpi anti-EBNA IgG": "91.21.6_0",
-  "Pepsinogeno I": "90.38.M_0",
-  "Pepsinogeno II": "90.38.N_0",
-  "Vitamina E (alfa-tocoferolo)": "90.45.2_3",
-  "Osmolalità sierica": "90.34.7_2",
-  "Bicarbonati sierici": "90.10.2_2",
-  "IgG4 sieriche": "90.68.4_5",
-  "G6PD": "90.27.2_0",
-  "G6PD (glucosio-6-fosfato deidrogenasi)": "90.27.2_0",
-  "Anticorpi anticardiolipina IgG": "90.47.5_2",
-  "Anticorpi anticardiolipina IgM": "90.47.5_3",
-  "Anticorpi anti-mitocondrio (AMA)": "90.52.1_0",
-  "Anticorpi anti-LKM1": "90.51.5_0",
-  "Anticorpi anti-SLA/LP": "90.52.5_13",
-  "Anticorpi anti-GBM": "90.48.9_0",
-  "Anticorpi anticentromero": "90.47.F_0",
-  "Anticorpi anti-Jo-1": "90.47.7_0",
-  "Anticorpi anti-Mi-2": "90.52.5_40",
-  "DHEA-S": "90.17.2_0",
-  "Androstenedione": "90.17.3_0",
-  "17-OH progesterone": "90.01.2_0",
-  "Tireoglobulina": "90.41.5_0",
-  "Anticorpi anti-recettore dell'acetilcolina": "90.53.9_0",
-  "Anticorpi anti-GAD65": "90.49.7_0",
-  "Anticorpi anti-IA2": "90.52.5_12",
-  "NSE (enolasi neurone-specifica)": "90.18.4_0",
-  "HBV-DNA quantitativo": "91.16.B_0",
-  "HCV-RNA quantitativo": "91.19.4_0"
-};
-    const reviewed=Object.entries(reviewedAliases).find(([alias])=>normalizeExamName(alias)===n);
-    if(reviewed) return findCatalogEntryByCode(reviewed[1]);
-    if (["EMOGRUPPO", "GRUPPO SANGUIGNO", "GRUPPO ABO", "GRUPPO AB0", "GRUPPO ABO E RH", "GRUPPO AB0 E RH", "EMOGRUPPO E RH"].includes(n)) return findCatalogEntryByCode("90.65.3_2");
-
-    // Sinonimi operativi della sola lista di prescrizione: non reinterpretare
-    // "albumina glicata" come HbA1c e non alterare i parser dei referti.
-    if (/^(?:GLICEMIA|GLUCOSIO)(?: BASALE| A DIGIUNO)?$/.test(n)) {
-      return findCatalogEntryByCode("90.27.1_2");
-    }
-    if (n === "GLICATA") return findCatalogEntryByCode("90.28.1_0");
-    const routineSynonyms = {
-      "CALCEMIA": "90.11.4_2",
-      "FOSFOREMIA": "90.24.3_2",
-      "FOSFATEMIA": "90.24.3_2",
-      "MAGNESEMIA": "90.32.5_2",
-      "KALIEMIA": "90.37.4_2",
-      "KALEMIA": "90.37.4_2",
-      "POTASSIEMIA": "90.37.4_2",
-      "SODIEMIA": "90.40.4_2",
-      "NATREMIA": "90.40.4_2",
-      "NATRIEMIA": "90.40.4_2",
-      "CLOREMIA": "90.13.3_2",
-      "AZOTEMIA": "90.44.1_6",
-      "URICEMIA": "90.43.5_2",
-      "SIDEREMIA": "90.22.5_2",
-      "ALP": "90.23.5_0",
-      "ALP TOTALE": "90.23.5_0",
-      "ALP OSSEA": "90.24.1_0",
-      "FOSFATASI ALCALINA OSSEA": "90.24.1_0",
-      "FOSFATASI ALCALINA TOTALE": "90.23.5_0"
-    };
-    if (routineSynonyms[n]) return findCatalogEntryByCode(routineSynonyms[n]);
-    // La raccolta temporizzata deve essere esplicita. Non confondere urine
-    // estemporanee, rapporti con creatinina e campioni delle 24 ore.
-    const urinarySynonyms = {
-      SODIURIA: ["90.40.4_3", "90.40.4_4"],
-      NATRIURIA: ["90.40.4_3", "90.40.4_4"],
-      KALIURIA: ["90.37.4_4", "90.37.4_3"],
-      POTASSIURIA: ["90.37.4_4", "90.37.4_3"],
-      FOSFATURIA: ["90.24.3_3", "90.24.3_4"],
-      MAGNESIURIA: ["90.32.5_4", "90.32.5_5"],
-      CLORURIA: ["90.13.3_3", "90.13.3_4"],
-      URICOSURIA: ["90.43.5_3", "90.43.5_4"],
-      CALCIURIA: [null, "90.11.4_3"]
-    };
-    const urinary = n.match(/^(\w+)(?: (24 ?H|24 ORE|DELLE 24 ?H|DELLE 24 ORE|SPOT|ESTEMPORANEA|SEMPLICE|NORMALE))?$/);
-    if (urinary && urinarySynonyms[urinary[1]]) {
-      const timed = /24/.test(urinary[2] || "");
-      const code = urinarySynonyms[urinary[1]][timed ? 1 : 0];
-      if (code) return findCatalogEntryByCode(code);
-    }
-    if (/^(?:ALANINA|ALANINO) AMINO\s*TRANSFERASI$/.test(n)) {
-      return findCatalogEntryByCode("90.04.5_0");
-    }
-    if (/^(?:ASPARTATO|ASPARTICO) AMINO\s*TRANSFERASI$/.test(n)) {
-      return findCatalogEntryByCode("90.09.2_0");
-    }
-
-    const molecular = isMolecularMicrobiologyText(raw) || /CARICA VIRALE|VIREMIA/.test(n);
-
-    // Accorpamenti usati nella prescrizione: diversi dalle singole righe che
-    // possono comparire nei referti di laboratorio.
-    if (!molecular && (/\bCMV\b/.test(n) || n.includes("CITOMEGALOVIRUS"))) {
-      return findCatalogEntryByCode("CMVAB");
-    }
-    if (!molecular && n.includes("TOXOPLAS")) {
-      return findCatalogEntryByCode("TOXOPAB");
-    }
-    if (!molecular && (n.includes("PARVOVIRUS") || /\bB19\b/.test(n))) {
-      return findCatalogEntryByCode("PARVOINF");
-    }
-    if (!molecular && (n.includes("TREPONEMA") || n.includes("SIFIL") || /\bTPHA\b|\bTPPA\b|\bVDRL\b|\bRPR\b/.test(n))) {
-      return findCatalogEntryByCode(n.includes("LIQUOR") ? "91.10.B_3" : "91.10.B_2");
-    }
-    if (!molecular && (/\bHIV\b/.test(n) || n.includes("IMMUNODEFIC"))) {
-      return findCatalogEntryByCode("91.23.F_0");
-    }
-    if (!molecular && (/\bHCV\b/.test(n) || n.includes("EPATITE C")) && !n.includes("ANTIGENE")) {
-      return findCatalogEntryByCode("91.19.5_0");
-    }
-
-    // HBV: se la lista contiene un profilo/multipli marcatori usa il reflex
-    // unico. HBs/HBsAg isolato usa invece HBsAg, come da uso operativo.
-    const isHbv = /\bHBV\b|EPAT(?:ITE)? B/.test(n) || /HBS|HBC|HBE/.test(n);
-    if (!molecular && isHbv) {
-      if (context?.hbvProfile) return findCatalogEntryByCode("91.18.6_0");
-      if (/ANTI\s*HBS|HBSAB|ANTICORPI\s+HBS/.test(n)) return findCatalogEntryByCode("91.18.3_0");
-      if (/ANTI\s*HBE|HBEAB|ANTICORPI\s+HBE/.test(n)) return findCatalogEntryByCode("91.18.2_0");
-      if (/\bHBEAG\b|ANTIGENE\s+HBE/.test(n)) return findCatalogEntryByCode("91.18.4_0");
-      if (/\bHBSAG\b|ANTIGENE\s+HBS|(?:^|\s)HBS(?:\s|$)/.test(n)) return findCatalogEntryByCode("91.18.5_0");
-    }
-
-    return null;
   }
 
   function resolvePrescriptionListItems(rawItems) {
@@ -16336,997 +17637,6 @@ button:disabled {
     if (hasCompilableItems()) await compileUnprescribedValidated();
   }
 
-  function cloneResultWithSource(item, source) {
-    return {
-      ...item,
-      workflowSource: source
-    };
-  }
-
-  function enrichEquivalentResult(primary, secondary) {
-    const out = { ...primary };
-
-    if (
-      !out.rangeAvailable &&
-      secondary?.rangeAvailable
-    ) {
-      out.refMin = secondary.refMin;
-      out.refMax = secondary.refMax;
-      out.refUnit = secondary.refUnit;
-      out.originalRefMin = secondary.originalRefMin;
-      out.originalRefMax = secondary.originalRefMax;
-      out.originalRefUnit = secondary.originalRefUnit;
-      out.rangeConverted = secondary.rangeConverted;
-      out.rangeAvailable = true;
-      out.rangeReason = secondary.rangeReason || "";
-    }
-
-    if (
-      !out.comparatorOriginal &&
-      secondary?.comparatorOriginal
-    ) {
-      out.comparatorOriginal =
-        secondary.comparatorOriginal;
-      out.comparatorOperator =
-        secondary.comparatorOperator;
-      out.comparatorOriginalWithUnit =
-        secondary.comparatorOriginalWithUnit;
-    }
-
-    return out;
-  }
-
-  function extractionHasAmbiguityForExam(extraction, exam) {
-    const n = normalizeExamName(exam);
-
-    return [
-      ...(extraction?.uncertain || []),
-      ...(extraction?.rejected || [])
-    ].some(item => {
-      const text = normalizeExamName(
-        `${item?.exam || ""} ${item?.text || ""} ${item?.raw_label || ""} ${item?.reason || ""}`
-      );
-
-      return n && text.includes(n);
-    });
-  }
-
-  function mergeIndependentReadings(
-    parserExtraction,
-    hybridExtraction,
-    targetExams
-  ) {
-    const parserMap =
-      new Map(
-        (parserExtraction?.results || [])
-          .map(item => [item.exam, item])
-      );
-
-    const hybridMap =
-      new Map(
-        (hybridExtraction?.results || [])
-          .map(item => [item.exam, item])
-      );
-
-    const aiResolved =
-      new Set(
-        hybridExtraction?.targetedAiResolvedTargets || []
-      );
-
-    const aiLongResolved =
-      new Set(
-        hybridExtraction?.targetedAiLongResolvedTargets || []
-      );
-
-    const targetSet =
-      new Set(targetExams || []);
-
-    const results = [];
-    const mergeUncertain = [];
-    const stats = {
-      parserOnly: 0,
-      aiOnly: 0,
-      concordant: 0,
-      conflicts: 0,
-      qwenNoiseIgnored: 0
-    };
-
-    // Un parser strutturato produce un dato solo dopo:
-    // matrice biologica -> mapping Eumed -> unità -> conversione -> controllo
-    // delle rappresentazioni equivalenti. Per questo un risultato presente
-    // in parserExtraction è considerato fonte deterministica forte.
-    for (const exam of targetSet) {
-      if (getLongReportKind(exam)) continue;
-
-      const parserItem = parserMap.get(exam);
-      const hybridItem = hybridMap.get(exam);
-      const aiFound = aiResolved.has(exam);
-
-      if (parserItem) {
-        if (hybridItem) {
-          const concept =
-            parserItem.concept ||
-            hybridItem.concept ||
-            getExamConcept(exam);
-
-          const agree =
-            valuesClinicallyEquivalent(
-              parserItem.value,
-              hybridItem.value,
-              concept
-            );
-
-          if (agree && aiFound) {
-            const merged =
-              enrichEquivalentResult(
-                parserItem,
-                hybridItem
-              );
-
-            stats.concordant += 1;
-
-            results.push(
-              cloneResultWithSource(
-                merged,
-                "parser+qwen"
-              )
-            );
-
-            continue;
-          }
-
-          if (!agree) {
-            // IA può leggere un numero vicino appartenente ad altra riga
-            // (es. PLT 299 come AST). Non deve avere potere di veto su un
-            // risultato deterministico strutturato.
-            stats.qwenNoiseIgnored += 1;
-          }
-        } else if (
-          aiFound ||
-          extractionHasAmbiguityForExam(
-            hybridExtraction,
-            exam
-          )
-        ) {
-          stats.qwenNoiseIgnored += 1;
-        }
-
-        stats.parserOnly += 1;
-
-        results.push(
-          cloneResultWithSource(
-            parserItem,
-            "parser"
-          )
-        );
-
-        continue;
-      }
-
-      // Solo se il parser non ha trovato nulla, IA può essere fonte unica.
-      if (hybridItem && aiFound) {
-        stats.aiOnly += 1;
-
-        results.push(
-          cloneResultWithSource(
-            hybridItem,
-            "qwen"
-          )
-        );
-      }
-    }
-
-    const parserLongMap =
-      new Map(
-        (parserExtraction?.longReports || [])
-          .map(item => [item.exam, item])
-      );
-
-    const hybridLongMap =
-      new Map(
-        (hybridExtraction?.longReports || [])
-          .map(item => [item.exam, item])
-      );
-
-    const longReports = [];
-
-    for (const exam of targetSet) {
-      if (!getLongReportKind(exam)) continue;
-
-      const parserItem = parserLongMap.get(exam);
-      const hybridItem = hybridLongMap.get(exam);
-      const aiFound = aiLongResolved.has(exam);
-
-      if (parserItem?.text) {
-        longReports.push({
-          ...parserItem,
-          workflowSource:
-            aiFound ? "parser+qwen" : "parser"
-        });
-        continue;
-      }
-
-      if (hybridItem?.text) {
-        longReports.push({
-          ...hybridItem,
-          workflowSource:
-            aiFound ? "qwen" : "parser"
-        });
-      }
-    }
-
-    function itemCoveredByAcceptedResult(item) {
-      const itemText =
-        `${item?.exam || ""} ${item?.text || ""} ` +
-        `${item?.raw_label || ""} ${item?.catalogName || ""}`;
-
-      const itemName =
-        normalizeExamName(
-          item?.exam ||
-          item?.text ||
-          item?.catalogName ||
-          ""
-        );
-
-      const itemConcept =
-        getExamConcept(itemText);
-
-      const itemSpecimen =
-        detectSpecimen(
-          item?.raw_label ||
-          item?.exam ||
-          item?.text ||
-          ""
-        );
-
-      return results.some(result => {
-        const resultName =
-          normalizeExamName(result?.exam || "");
-
-        if (
-          itemName &&
-          resultName &&
-          (
-            itemName === resultName ||
-            itemName.includes(resultName) ||
-            resultName.includes(itemName)
-          )
-        ) {
-          return true;
-        }
-
-        const resultConcept =
-          getExamConcept(
-            `${result?.exam || ""} ${result?.raw_label || ""}`
-          );
-
-        if (
-          !itemConcept ||
-          !resultConcept ||
-          itemConcept !== resultConcept
-        ) {
-          return false;
-        }
-
-        const resultSpecimen =
-          detectSpecimen(
-            result?.raw_label ||
-            result?.exam ||
-            ""
-          );
-
-        if (
-          itemSpecimen &&
-          resultSpecimen &&
-          itemSpecimen !== resultSpecimen
-        ) {
-          return false;
-        }
-
-        return true;
-      });
-    }
-
-    const recognizedNotInGrid =
-      dedupeRecognizedNotInGrid([
-        ...(parserExtraction?.recognizedNotInGrid || []),
-        ...(hybridExtraction?.recognizedNotInGrid || [])
-      ]).filter(
-        item => !itemCoveredByAcceptedResult(item)
-      );
-
-    const seenAmbiguous = new Set();
-    const uncertain = [];
-
-    for (const item of [
-      ...mergeUncertain,
-      ...(hybridExtraction?.uncertain || [])
-    ]) {
-      // Se il parser deterministico ha già fornito il risultato accettato,
-      // non mostrare come ambiguità il rumore generato dal secondo lettore.
-      if (itemCoveredByAcceptedResult(item)) continue;
-
-      const key = normalizeExamName(
-        `${item?.text || item?.exam || ""} ${item?.reason || ""}`
-      );
-
-      if (key && seenAmbiguous.has(key)) continue;
-      if (key) seenAmbiguous.add(key);
-      uncertain.push(item);
-    }
-
-    const hasAcceptedBilirubinReflex = results.some(result =>
-      getExamConcept(`${result?.exam || ""} ${result?.raw_label || ""}`) === "BILIRUBIN_TOTAL" &&
-      normalizeExamName(result?.exam || "").includes("BILIRUBINA REFLEX")
-    );
-
-    function isBilirubinNoise(item) {
-      if (!hasAcceptedBilirubinReflex) return false;
-
-      const concept = getExamConcept(
-        `${item?.exam || ""} ${item?.text || ""} ${item?.raw_label || ""} ${item?.catalogName || ""}`
-      );
-
-      return [
-        "BILIRUBIN_TOTAL",
-        "BILIRUBIN_DIRECT",
-        "BILIRUBIN_INDIRECT"
-      ].includes(concept);
-    }
-
-    const filteredUncertain = uncertain.filter(
-      item => !isBilirubinNoise(item)
-    );
-
-    const rejected =
-      (hybridExtraction?.rejected || [])
-        .filter(
-          item =>
-            !itemCoveredByAcceptedResult(item) &&
-            !isBilirubinNoise(item)
-        );
-
-    const filteredRecognizedNotInGrid =
-      recognizedNotInGrid.filter(
-        item => !isBilirubinNoise(item)
-      );
-
-    return {
-      results,
-      longReports,
-      recognizedNotInGrid: filteredRecognizedNotInGrid,
-      rejected,
-      uncertain: filteredUncertain,
-      targetedAiTargets: [...targetSet],
-      targetedAiBatches:
-        hybridExtraction?.targetedAiBatches || 0,
-      targetedAiResolvedTargets:
-        hybridExtraction?.targetedAiResolvedTargets || [],
-      targetedAiLongResolvedTargets:
-        hybridExtraction?.targetedAiLongResolvedTargets || [],
-      longReportAiFallbacks:
-        hybridExtraction?.longReportAiFallbacks || 0,
-      labLayout:
-        parserExtraction?.labLayout ||
-        hybridExtraction?.labLayout ||
-        "",
-      labLayoutName:
-        parserExtraction?.labLayoutName ||
-        hybridExtraction?.labLayoutName ||
-        "",
-      reportDate:
-        parserExtraction?.reportDate ||
-        hybridExtraction?.reportDate ||
-        "",
-      reportDateEvidence:
-        parserExtraction?.reportDateEvidence ||
-        hybridExtraction?.reportDateEvidence ||
-        "",
-      workflowStats: stats
-    };
-  }
-
-  function emptyHybridExtraction(parserExtraction = null) {
-    return {
-      results: [],
-      longReports: [],
-      recognizedNotInGrid: [],
-      rejected: [],
-      uncertain: [],
-      targetedAiBatches: 0,
-      targetedAiTargets: [],
-      targetedAiResolvedTargets: [],
-      targetedAiLongResolvedTargets: [],
-      longReportAiFallbacks: 0,
-      labLayout: parserExtraction?.labLayout || "",
-      labLayoutName: parserExtraction?.labLayoutName || "",
-      reportDate: parserExtraction?.reportDate || "",
-      reportDateEvidence:
-        parserExtraction?.reportDateEvidence || ""
-    };
-  }
-
-  function residualTargetHasTextAnchor(reportText, exam) {
-    const normalizedReport = normalizeExamName(reportText);
-    if (!normalizedReport) return false;
-
-    const wordSet = new Set(
-      normalizedReport
-        .split(/\s+/)
-        .filter(Boolean)
-    );
-
-    const terms = targetConceptTerms(exam)
-      .map(normalizeExamName)
-      .filter(Boolean);
-
-    // Se il resolver non conosce ancora sinonimi affidabili per questo esame,
-    // non usiamo il gate: IA resta disponibile come rete di sicurezza.
-    if (!terms.length) return null;
-
-    for (const term of terms) {
-      // Sigle brevi (TSH, AST, ALT, WBC, RBC...) devono comparire come token
-      // autonomi: evita falsi match dentro parole più lunghe.
-      if (!term.includes(" ") && term.length <= 4) {
-        if (wordSet.has(term)) return true;
-        continue;
-      }
-
-      if (normalizedReport.includes(term)) return true;
-    }
-
-    return false;
-  }
-
-
-  function getUnclaimedAiEvidence(reportText, parserExtraction) {
-    const layout =
-      parserExtraction?.labLayout ||
-      detectKnownLabLayout(reportText);
-
-    const stripped = stripKnownPageChrome(reportText, layout);
-    const unclaimed = removeConsumedAiLines(stripped, parserExtraction);
-
-    const parsedConcepts = new Set(
-      (parserExtraction?.results || [])
-        .map(item => getExamConcept(`${item?.exam || ""} ${item?.raw_label || ""}`))
-        .filter(Boolean)
-    );
-
-    const longKinds = new Set(
-      (parserExtraction?.longReports || [])
-        .map(item => item?.kind || getLongReportKind(item?.exam || ""))
-        .filter(Boolean)
-    );
-
-    const hasExplicitTargetConcept = concept =>
-      getAvailableExams().some(exam => getExamConcept(exam) === concept);
-
-    const isKnownAuxiliaryLine = line => {
-      const n = normalizeExamName(line);
-      const concept = getExamConcept(line);
-      if (isKnownResidualNonExamLabel(line)) return true;
-      if (parsedConcepts.has("HBA1C") && isHbA1cLabel(line)) return true;
-
-      // Rapporto FLC: dato accessorio delle due catene quando Eumed non ha
-      // una riga dedicata. Non deve far partire un recupero semantico per un
-      // target del tutto assente (es. IgE allergeniche).
-      if (concept === "FLC_RATIO" && !hasExplicitTargetConcept("FLC_RATIO")) {
-        return true;
-      }
-
-      // eGFR è accessorio della creatinina sierica quando questa è già stata
-      // risolta deterministicamente.
-      if (
-        parsedConcepts.has("CREATININE") &&
-        (/\bEGFR\b/.test(n) || n.includes("FILTRAZIONE GLOMERULARE"))
-      ) {
-        return true;
-      }
-
-      // Diuresi/volume delle 24h è contesto del referto Bence-Jones/urinario,
-      // non una nuova prestazione da spiegare semanticamente.
-      if (
-        /\bDIURESI\b/.test(n) &&
-        (longKinds.has("BENCE_JONES") || longKinds.has("URINE"))
-      ) {
-        return true;
-      }
-
-      // Componenti già inglobate in referti complessi non devono riattivare
-      // IA come se fossero un analita sconosciuto autonomo.
-      if (
-        n.includes("COMPONENTE MONOCLONALE") &&
-        (longKinds.has("PROTIDOGRAMMA") || longKinds.has("TIPIZZAZIONE_MONOCLONALE"))
-      ) {
-        return true;
-      }
-
-      return false;
-    };
-
-    const hasPlausibleAnalyteLabel = line => {
-      const raw = String(line || "").trim();
-      // Le righe di continuazione che iniziano direttamente con il valore
-      // (es. "52,0 %" o una seconda unità equivalente) non rappresentano
-      // un nuovo esame e non devono alimentare il semantic rescue.
-      const beforeNumber = raw.split(/[<>≤≥]?\s*[+-]?\d/)[0] || "";
-      return /[A-Za-zÀ-ÿ]{2,}/.test(beforeNumber);
-    };
-
-    const evidenceLines = String(unclaimed || "")
-      .split(/\r?\n/)
-      .map(line => String(line || "").trim())
-      .filter(Boolean)
-      .filter(line => {
-        if (isKnownAuxiliaryLine(line)) return false;
-
-        if (aiLineHasMeasurement(line)) {
-          return hasPlausibleAnalyteLabel(line);
-        }
-
-        const n = normalizeExamName(line);
-        return (
-          /(?:POSITIV\w*|NEGATIV\w*|REATTIV\w*|NON\s+REATTIV\w*|PRESENT\w*|ASSENT\w*|RILEVAT\w*|NON\s+RILEVAT\w*)/.test(n) &&
-          /[A-Z]{2,}/.test(n)
-        );
-      });
-
-    return {
-      text: unclaimed,
-      evidenceLines,
-      count: evidenceLines.length
-    };
-  }
-
-  function shouldSendResidualTargetToQwen(reportText, exam, knownLayout) {
-    // Su layout ignoti IA deve continuare a vedere tutti i target irrisolti.
-    if (!knownLayout) {
-      return { send: true, reason: "unknown_layout" };
-    }
-
-    const hasAnchor = residualTargetHasTextAnchor(reportText, exam);
-
-    if (hasAnchor === null) {
-      return { send: true, reason: "no_known_aliases" };
-    }
-
-    if (hasAnchor) {
-      return { send: true, reason: "text_anchor" };
-    }
-
-    return { send: false, reason: "no_text_anchor" };
-  }
-
-  async function prepareResidualQwenPlan(
-    reportText,
-    targetExams,
-    progressCallback = null
-  ) {
-    const startedAt = Date.now();
-
-    const targets =
-      (targetExams || []).filter(Boolean);
-
-    const parserExtraction =
-      await extractFromReport(
-        reportText,
-        info =>
-          progressCallback?.({
-            ...info,
-            analysisStage: "parser"
-          }),
-        {
-          deterministicOnly: true
-        }
-      );
-
-    const strongResolved =
-      collectStrongResolvedTargets(
-        parserExtraction,
-        targets
-      );
-
-    const unresolvedTargets =
-      targets.filter(
-        exam => !strongResolved.has(exam)
-      );
-
-    // v0.14.2: sui layout di laboratorio noti il parser deterministico ha
-    // già letto l'intero referto strutturato. IA viene quindi chiamato
-    // soltanto per un target residuo se nel testo esiste almeno un'ancora
-    // lessicale plausibile (nome, sinonimo o componente del referto lungo).
-    // Se non esiste alcun indizio, inviare comunque il nome dell'esame a
-    // IA tende a produrre associazioni spurie e spreca decine di secondi.
-    // Per layout sconosciuti manteniamo invece il comportamento prudente
-    // precedente e lasciamo tutti i residui a IA.
-    const knownLayout =
-      parserExtraction?.labLayout ||
-      detectKnownLabLayout(reportText);
-
-    const skippedNoEvidenceTargets = [];
-    const residualTargets = [];
-    const semanticRescueTargets = [];
-    const unclaimedEvidence = getUnclaimedAiEvidence(
-      reportText,
-      parserExtraction
-    );
-
-    for (const exam of unresolvedTargets) {
-      const gate = shouldSendResidualTargetToQwen(
-        reportText,
-        exam,
-        knownLayout
-      );
-
-      if (gate.send) {
-        residualTargets.push(exam);
-      } else if (
-        gate.reason === "no_text_anchor" &&
-        unclaimedEvidence.count > 0
-      ) {
-        // v0.15.15: se il parser ha lasciato righe di laboratorio reali non
-        // consumate, IA può tentare un'associazione SEMANTICA anche se il
-        // target non condivide parole note con la riga. Il resolver è
-        // target-bound, quindi non può inventare una prestazione diversa.
-        residualTargets.push(exam);
-        semanticRescueTargets.push(exam);
-      } else {
-        skippedNoEvidenceTargets.push(exam);
-      }
-    }
-
-    const residualText =
-      residualTargets.length
-        ? buildResidualAiText(
-            reportText,
-            parserExtraction,
-            residualTargets
-          )
-        : "";
-
-    const strongLongKinds = [
-      ...new Set(
-        (parserExtraction?.longReports || [])
-          .filter(item =>
-            strongResolved.has(item?.exam)
-          )
-          .map(item => item?.kind)
-          .filter(Boolean)
-      )
-    ];
-
-    const plan = {
-      reportText,
-      targets,
-      parserExtraction,
-      strongResolved,
-      unresolvedTargets,
-      residualTargets,
-      skippedNoEvidenceTargets,
-      semanticRescueTargets,
-      unclaimedEvidenceCount: unclaimedEvidence.count,
-      residualText,
-      strongLongKinds,
-      parserMs: Date.now() - startedAt
-    };
-
-    progressCallback?.({
-      phase: "residual_plan",
-      analysisStage: "planner",
-      totalTargets: targets.length,
-      strongResolved:
-        strongResolved.size,
-      unresolvedTargets,
-      unresolvedCount:
-        unresolvedTargets.length,
-      residualTargets,
-      residualCount:
-        residualTargets.length,
-      skippedNoEvidenceTargets,
-      skippedNoEvidenceCount:
-        skippedNoEvidenceTargets.length,
-      semanticRescueTargets,
-      semanticRescueCount:
-        semanticRescueTargets.length,
-      unclaimedEvidenceCount:
-        unclaimedEvidence.count,
-      originalChars:
-        String(reportText || "").length,
-      aiChars:
-        residualText.length,
-      parserMs: plan.parserMs
-    });
-
-    return plan;
-  }
-
-  async function runResidualQwenFromPlan(
-    plan,
-    progressCallback = null
-  ) {
-    const qwenStartedAt = Date.now();
-
-    let hybridExtraction =
-      emptyHybridExtraction(
-        plan.parserExtraction
-      );
-
-    if (plan.residualTargets.length) {
-      hybridExtraction =
-        await extractFromReport(
-          plan.reportText,
-          info =>
-            progressCallback?.({
-              ...info,
-              analysisStage: "qwen"
-            }),
-          {
-            deterministicOnly: false,
-            aiTargetsOverride:
-              plan.residualTargets,
-            aiReportTextOverride:
-              plan.residualText,
-            skipLongReportAiKinds:
-              plan.strongLongKinds
-          }
-        );
-    }
-
-    const merged =
-      mergeIndependentReadings(
-        plan.parserExtraction,
-        hybridExtraction,
-        plan.targets
-      );
-
-    merged.strongParserResolvedCount =
-      plan.strongResolved.size;
-    merged.residualAiTargetCount =
-      plan.residualTargets.length;
-    merged.residualAiTargets =
-      plan.residualTargets;
-    merged.unresolvedAfterParserCount =
-      (plan.unresolvedTargets || plan.residualTargets || []).length;
-    merged.aiSkippedNoEvidenceCount =
-      (plan.skippedNoEvidenceTargets || []).length;
-    merged.aiSkippedNoEvidenceTargets =
-      plan.skippedNoEvidenceTargets || [];
-    merged.aiSemanticRescueCount =
-      (plan.semanticRescueTargets || []).length;
-    merged.aiSemanticRescueTargets =
-      plan.semanticRescueTargets || [];
-    merged.aiUnclaimedEvidenceCount =
-      plan.unclaimedEvidenceCount || 0;
-    merged.aiInputChars =
-      plan.residualText.length;
-    merged.originalInputChars =
-      String(plan.reportText || "").length;
-    merged.aiInputReductionPercent =
-      String(plan.reportText || "").length
-        ? Math.max(
-            0,
-            Math.round(
-              100 -
-              (
-                plan.residualText.length /
-                String(plan.reportText || "").length
-              ) * 100
-            )
-          )
-        : 0;
-
-    const qwenMs =
-      plan.residualTargets.length
-        ? Date.now() - qwenStartedAt
-        : 0;
-
-    merged.parserMs = plan.parserMs || 0;
-    merged.qwenMs = qwenMs;
-
-    return {
-      parserExtraction:
-        plan.parserExtraction,
-      hybridExtraction,
-      merged,
-      strongResolved:
-        plan.strongResolved,
-      unresolvedTargets:
-        plan.unresolvedTargets || plan.residualTargets,
-      residualTargets:
-        plan.residualTargets,
-      skippedNoEvidenceTargets:
-        plan.skippedNoEvidenceTargets || [],
-      residualText:
-        plan.residualText,
-      parserMs:
-        plan.parserMs || 0,
-      qwenMs
-    };
-  }
-
-  async function runResidualQwenAnalysis(
-    reportText,
-    targetExams,
-    progressCallback = null
-  ) {
-    const plan =
-      await prepareResidualQwenPlan(
-        reportText,
-        targetExams,
-        progressCallback
-      );
-
-    return await runResidualQwenFromPlan(
-      plan,
-      progressCallback
-    );
-  }
-
-  function collectRawBilirubinMeasurements(reportText) {
-    const layout = detectKnownLabLayout(reportText);
-    let raw = [];
-
-    if (layout === "AOU_PADOVA") {
-      raw = extractAouPadovaResults(reportText);
-    } else if (layout === "ULSS6_SCHIAVONIA") {
-      raw = [
-        ...extractSpecimenAnchoredResults(reportText),
-        ...extractUlss6DirectResults(reportText)
-      ];
-    } else {
-      raw = extractSpecimenAnchoredResults(reportText);
-    }
-
-    // Integra eventuali frazioni bilirubiniche senza prefisso s-/p-
-    // (frequente in alcuni referti SYNLAB).
-    for (const line of cleanReportLines(reportText)) {
-      const m = line.match(
-        /^(Bilirubina\s+(?:Totale|Diretta|Indiretta|Coniugata|Non\s+Coniugata))\s+([<>≤≥]?\s*[+-]?\d+(?:[.,]\d+)?)\s+(mg\/dL|u?mol\/L|µmol\/L|μmol\/L)/i
-      );
-
-      if (!m) continue;
-
-      raw.push({
-        exam: m[1],
-        raw_label: m[1],
-        value: m[2].replace(/\s+/g, ""),
-        unit: m[3],
-        evidence: line
-      });
-    }
-
-    const groups = new Map();
-
-    for (const item of raw) {
-      const specimen =
-        detectSpecimen(item?.raw_label || item?.exam || "");
-
-      if (specimen === "URINE") continue;
-
-      const concept =
-        getExamConcept(
-          `${item?.exam || ""} ${item?.raw_label || ""}`
-        );
-
-      if (
-        ![
-          "BILIRUBIN_TOTAL",
-          "BILIRUBIN_DIRECT",
-          "BILIRUBIN_INDIRECT"
-        ].includes(concept)
-      ) {
-        continue;
-      }
-
-      const rawValue =
-        String(item?.value || "")
-          .replace(/^[<>≤≥]\s*/, "")
-          .trim();
-
-      if (!/^[+-]?\d+(?:[.,]\d+)?$/.test(rawValue)) {
-        continue;
-      }
-
-      const converted =
-        convertMeasurement(
-          concept,
-          rawValue,
-          String(item?.unit || "")
-        );
-
-      if (!converted.ok) continue;
-
-      if (!groups.has(concept)) {
-        groups.set(concept, []);
-      }
-
-      groups.get(concept).push({
-        value: converted.value,
-        unit: converted.unit
-      });
-    }
-
-    const output = {};
-
-    for (const [concept, items] of groups.entries()) {
-      if (!items.length) continue;
-
-      const first = items[0];
-
-      const agree =
-        items.every(item =>
-          valuesClinicallyEquivalent(
-            item.value,
-            first.value,
-            concept
-          )
-        );
-
-      if (agree) {
-        output[concept] = first;
-      }
-    }
-
-    return output;
-  }
-
-  function buildCompositeExamDetails(
-    reportText,
-    mergedExtraction
-  ) {
-    const output = [];
-
-    const bilirubinResult =
-      (mergedExtraction?.results || [])
-        .find(item =>
-          getExamConcept(
-            `${item?.exam || ""} ${item?.raw_label || ""}`
-          ) === "BILIRUBIN_TOTAL" &&
-          normalizeExamName(item?.exam || "")
-            .includes("BILIRUBINA REFLEX")
-        );
-
-    if (bilirubinResult) {
-      const parts =
-        collectRawBilirubinMeasurements(reportText);
-
-      const total = parts.BILIRUBIN_TOTAL;
-      const direct = parts.BILIRUBIN_DIRECT;
-      const indirect = parts.BILIRUBIN_INDIRECT;
-
-      if (direct || indirect) {
-        const lines = [];
-
-        if (total) {
-          lines.push(
-            `Bilirubina totale: ${total.value} ${total.unit}`
-          );
-        }
-
-        if (direct) {
-          lines.push(
-            `Bilirubina diretta/coniugata: ${direct.value} ${direct.unit}`
-          );
-        }
-
-        if (indirect) {
-          lines.push(
-            `Bilirubina indiretta/non coniugata: ${indirect.value} ${indirect.unit}`
-          );
-        }
-
-        output.push({
-          exam: bilirubinResult.exam,
-          kind: "BILIRUBINA_COMPONENTI",
-          text: lines.join("\n")
-        });
-      }
-    }
-
-    return output;
-  }
-
   async function compileCompositeDetails(
     items,
     label = "Dettagli esami composti",
@@ -17427,289 +17737,10 @@ button:disabled {
       .replace(".", ",")} s`;
   }
 
-  function buildStrongParserWriteSet(
-    plan
-  ) {
-    const strong =
-      plan?.strongResolved ||
-      new Set();
-
-    const results =
-      (plan?.parserExtraction?.results || [])
-        .filter(item =>
-          strong.has(item?.exam) &&
-          !getLongReportKind(item?.exam)
-        )
-        .map(item => ({
-          ...item,
-          workflowSource: "parser"
-        }));
-
-    const longReports =
-      (plan?.parserExtraction?.longReports || [])
-        .filter(item =>
-          strong.has(item?.exam) &&
-          !!String(item?.text || "").trim()
-        )
-        .map(item => ({
-          ...item,
-          workflowSource: "parser"
-        }));
-
-    const parserOnlyMerged =
-      mergeIndependentReadings(
-        plan.parserExtraction,
-        emptyHybridExtraction(
-          plan.parserExtraction
-        ),
-        plan.targets
-      );
-
-    const compositeDetails =
-      buildCompositeExamDetails(
-        plan.reportText,
-        parserOnlyMerged
-      );
-
-    return {
-      results,
-      longReports,
-      compositeDetails
-    };
-  }
-
-  function filterPostQwenWriteSet(
-    merged,
-    strongResolved,
-    alreadyCompletedComposite = []
-  ) {
-    const strong =
-      strongResolved ||
-      new Set();
-
-    const results =
-      (merged?.results || [])
-        .filter(item =>
-          !strong.has(item?.exam) &&
-          item?.workflowSource === "qwen"
-        );
-
-    const longReports =
-      (merged?.longReports || [])
-        .filter(item =>
-          !strong.has(item?.exam) &&
-          item?.workflowSource === "qwen"
-        );
-
-    const completedCompositeKeys =
-      new Set(
-        (alreadyCompletedComposite || [])
-          .map(item =>
-            normalizeExamName(
-              `${item?.exam || ""}|${item?.text || ""}`
-            )
-          )
-      );
-
-    return {
-      results,
-      longReports,
-      completedCompositeKeys
-    };
-  }
-
   function mergeCompileWarnings(...numericResults) {
     const fieldWarnings=[], dateWarnings=[];
     for(const r of numericResults){fieldWarnings.push(...(r?.fieldWarnings||[]));dateWarnings.push(...(r?.dateWarnings||[]));}
     return {fieldWarnings,dateWarnings};
-  }
-
-  function auditItemName(item) {
-    return String(
-      item?.exam ||
-      item?.raw_label ||
-      item?.text ||
-      item?.catalogName ||
-      item?.name ||
-      ""
-    ).trim();
-  }
-
-  function buildEumedAudit(extraction, reportText = "") {
-    const targetExams = (extraction?.targetedAiTargets || []).filter(Boolean);
-    const normalizedReport =
-      normalizeExamName(reportText);
-
-    function targetHasReportEvidence(exam) {
-      if (!normalizedReport) return true;
-
-      const terms =
-        [...targetConceptTerms(exam)]
-          .map(normalizeExamName)
-          .filter(term => term && term.length >= 3);
-
-      return terms.some(term =>
-        normalizedReport.includes(term)
-      );
-    }
-
-    const presentLongKinds = new Set(
-      targetExams
-        .map(getLongReportKind)
-        .filter(Boolean)
-    );
-
-    const hasCreatinineTarget = targetExams.some(
-      exam => getExamConcept(exam) === "CREATININE"
-    );
-
-    const shouldSuppressComponentWarning = item => {
-      const text = `${auditItemName(item)} ${item?.reason || ""}`;
-      const n = normalizeExamName(text);
-
-      if (isLongReportComponent(text, presentLongKinds)) {
-        return true;
-      }
-
-      // eGFR è informazione accessoria della creatinina sierica e non una
-      // prestazione autonoma quando in Eumed esiste già CREATININA.
-      if (
-        hasCreatinineTarget &&
-        (
-          /\bEGFR\b/.test(n) ||
-          n.includes("FILTRAZIONE GLOMERULARE")
-        )
-      ) {
-        return true;
-      }
-
-      return false;
-    };
-
-    const presentInReportAbsentEumed =
-      (extraction?.recognizedNotInGrid || [])
-        .filter(item => !shouldSuppressComponentWarning(item))
-        .map(item => ({
-          name: auditItemName(item),
-          detail:
-            item?.value
-              ? `${item.value}${item.unit ? " " + item.unit : ""}`
-              : ""
-        }))
-        .filter(x => x.name);
-
-    const rawAmbiguousItems = [
-      ...(extraction?.uncertain || []).map(item => ({
-        name: auditItemName(item) || "Dato non risolto",
-        reason: String(item?.reason || "").trim()
-      })),
-      ...(extraction?.rejected || []).map(item => ({
-        name: auditItemName(item) || "Dato rifiutato",
-        reason: String(item?.reason || "").trim()
-      }))
-    ]
-      .filter(item => !shouldSuppressComponentWarning(item))
-      .filter(item => {
-        // Se IA propone un target Eumed ma nel referto non compare
-        // nemmeno una delle sue ancore lessicali, il risultato rifiutato
-        // è rumore del modello: va classificato come "non trovato",
-        // non come esame ambiguo/non validabile.
-        const itemName =
-          normalizeExamName(item.name);
-
-        const matchingTarget =
-          targetExams.find(exam => {
-            const targetName =
-              normalizeExamName(exam);
-
-            if (
-              itemName &&
-              targetName &&
-              (
-                itemName === targetName ||
-                itemName.includes(targetName) ||
-                targetName.includes(itemName)
-              )
-            ) {
-              return true;
-            }
-
-            const itemConcept =
-              getExamConcept(item.name);
-            const targetConcept =
-              getExamConcept(exam);
-
-            return (
-              itemConcept &&
-              targetConcept &&
-              itemConcept === targetConcept
-            );
-          });
-
-        if (
-          matchingTarget &&
-          !targetHasReportEvidence(
-            matchingTarget
-          )
-        ) {
-          return false;
-        }
-
-        return true;
-      });
-
-    const ambiguousItems = [];
-    const seenAmbiguous = new Set();
-
-    for (const item of rawAmbiguousItems) {
-      const key = normalizeExamName(`${item.name}|${item.reason}`);
-      if (seenAmbiguous.has(key)) continue;
-      seenAmbiguous.add(key);
-      ambiguousItems.push(item);
-    }
-
-    const resolvedNames = new Set(
-      [
-        ...(extraction?.results || []).map(x => x?.exam),
-        ...(extraction?.longReports || []).map(x => x?.exam)
-      ]
-        .filter(Boolean)
-        .map(normalizeExamName)
-    );
-
-    const ambiguousText = normalizeExamName(
-      ambiguousItems
-        .map(x => `${x.name} ${x.reason}`)
-        .join(" ")
-    );
-
-    const eumedNotFound = targetExams
-      .filter(exam => !resolvedNames.has(normalizeExamName(exam)))
-      .filter(exam => {
-        const n = normalizeExamName(exam);
-        return !n || !ambiguousText.includes(n);
-      });
-
-    const dedupeNamed = list => {
-      const seen = new Set();
-      return list.filter(item => {
-        const key = normalizeExamName(
-          typeof item === "string"
-            ? item
-            : `${item?.name || ""}|${item?.detail || ""}`
-        );
-        if (!key || seen.has(key)) return false;
-        seen.add(key);
-        return true;
-      });
-    };
-
-    return {
-      presentInReportAbsentEumed: dedupeNamed(presentInReportAbsentEumed),
-      eumedNotFound: dedupeNamed(eumedNotFound),
-      ambiguousItems,
-      transferText: buildPrescribedTransferText(extraction,reportText)
-    };
   }
 
   function renderEumedAudit(audit) {

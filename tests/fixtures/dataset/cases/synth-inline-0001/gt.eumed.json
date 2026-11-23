@@ -1,0 +1,66 @@
+{
+  "format_version": 1,
+  "meta": {
+    "source_type": "text_pdf",
+    "lab_layout": "INLINE_CBC_CHEMISTRY",
+    "synthetic": true,
+    "annotator": "AC",
+    "notes": "Referto inventato, generato da make_fixtures.cjs."
+  },
+  "input": {
+    "workflow": "prescribed",
+    "eumed_targets": [
+      "EMOCROMO",
+      "GLUCOSIO",
+      "CREATININA",
+      "COLESTEROLO TOTALE",
+      "TRIGLICERIDI",
+      "FERRITINA",
+      "TSH"
+    ]
+  },
+  "expected": {
+    "report_date": "2026-11-03",
+    "targets": {
+      "EMOCROMO": {
+        "status": "long_report",
+        "must_contain": ["Leucociti", "Emoglobina", "Piastrine"]
+      },
+      "GLUCOSIO": {
+        "status": "filled",
+        "value": "94",
+        "unit": "mg/dL",
+        "min": "74",
+        "max": "106",
+        "source": "P-GLUCOSIO 94 mg/dL [74 - 106]"
+      },
+      "CREATININA": {
+        "status": "filled",
+        "value": "1,22",
+        "unit": "mg/dL",
+        "min": "0,72",
+        "max": "1,18",
+        "source": "P-CREATININA * 1,22 mg/dL [0,72 - 1,18]"
+      },
+      "COLESTEROLO TOTALE": {
+        "status": "filled",
+        "value": "172",
+        "unit": "mg/dL",
+        "min": "80",
+        "max": "200",
+        "source": "P-COLESTEROLO 172 mg/dL [80 - 200]"
+      },
+      "TRIGLICERIDI": {
+        "status": "filled",
+        "value": "52",
+        "unit": "mg/dL",
+        "min": "30",
+        "max": "150",
+        "source": "P-TRIGLICERIDI 52 mg/dL [30,0 - 150,0]"
+      },
+      "FERRITINA": { "status": "absent" },
+      "TSH": { "status": "absent" }
+    },
+    "not_in_eumed": ["HDL-COLESTEROLO"]
+  }
+}

@@ -1,0 +1,54 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>
+endobj
+4 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+5 0 obj
+<< /Length 775 >>
+stream
+BT
+/F1 10 Tf
+14 TL
+50 800 Td
+(LABORATORIO SINTETICO DI PROVA - REFERTO FITTIZIO) Tj
+T* (Paziente: CASO SINTETICO) Tj
+T* (Data referto: 03/11/2026) Tj
+T* (EMATOLOGIA) Tj
+T* (ES. EMOCROMOCITOMETRICO) Tj
+T* (Leucociti 6,10 x10^3/mmc [4,50 - 11,00]) Tj
+T* (Eritrociti 4,90 x10^6/mmc [4,50 - 6,10]) Tj
+T* (Emoglobina 14,8 g/dL [14,0 - 18,0]) Tj
+T* (Ematocrito 44,2 % [40,0 - 50,0]) Tj
+T* (Volume cellulare medio 90,2 fL [80,0 - 99,0]) Tj
+T* (Piastrine 241 x10^3/mmc [130 - 400]) Tj
+T* (CHIMICA CLINICA) Tj
+T* (P-GLUCOSIO 94 mg/dL [74 - 106]) Tj
+T* (P-CREATININA * 1,22 mg/dL [0,72 - 1,18]) Tj
+T* (P-TRIGLICERIDI 52 mg/dL [30,0 - 150,0]) Tj
+T* (P-COLESTEROLO 172 mg/dL [80 - 200]) Tj
+T* (P-HDL-COLESTEROLO 62 mg/dL [45 - 130]) Tj
+T* (Validazione assistita da sistema esperto) Tj
+ET
+endstream
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000241 00000 n 
+0000000338 00000 n 
+trailer
+<< /Size 6 /Root 1 0 R >>
+startxref
+1164
+%%EOF

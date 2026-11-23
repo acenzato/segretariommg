@@ -1,0 +1,25 @@
+{
+  "name": "segretariommg",
+  "private": true,
+  "description": "Segretario MMG: estensione Chrome per Eumed e motore di analisi referti eseguibile in Node.",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "node tools/build_extension.mjs",
+    "lint": "eslint src tools/build_extension.mjs tools/eval.mjs",
+    "pretest": "node tools/build_extension.mjs",
+    "test": "node --test tests/*.test.cjs",
+    "eval": "node tools/eval.mjs",
+    "fixtures": "node tests/fixtures/dataset/make_fixtures.cjs"
+  },
+  "devDependencies": {
+    "acorn": "^8.19.0",
+    "eslint": "^10.15.0",
+    "globals": "^17.14.0"
+  },
+  "dependencies": {
+    "pdfjs-dist": "6.5.438"
+  }
+}

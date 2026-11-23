@@ -2,6 +2,7 @@
 from pathlib import Path
 import hashlib,json,zipfile,subprocess,sys
 root=Path(__file__).resolve().parents[1]
+subprocess.run(['node',str(root/'tools/build_extension.mjs')],check=True)
 output=root/'outputs';output.mkdir(exist_ok=True)
 version=json.loads((root/'manifest.json').read_text())['version']
 names=['manifest.json','segretario.js','background.js','lab_catalog.json','paddle_sandbox.html','paddle_sandbox.js','README.txt','VERIFICA_PADDLEOCR_BROWSER.ps1','PaddleOCR_Browser/paddleocr_bridge.mjs']

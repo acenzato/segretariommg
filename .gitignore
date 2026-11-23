@@ -6,3 +6,7 @@ __pycache__/
 *.pdf
 *.xlsx
 sn*.txt
+node_modules/
+!tests/fixtures/dataset/cases/*/source.pdf
+tests/fixtures/dataset/cases/*/runs/
+segretario.js
